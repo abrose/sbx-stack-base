@@ -60,6 +60,10 @@ check "$name" "git aliases" '[ -n "$(git config --get alias.st)" ]'
 check "$name" "outputStyle from files/claude/settings.json" "[ \"\$(jq -r .outputStyle ~/.claude/settings.json)\" = '$style' ]"
 check "$name" "statusLine runs the kit's statusline" \
   "[ \"\$(jq -r .statusLine.command ~/.claude/settings.json)\" = $share/claude/statusline ] && test -x $share/claude/statusline"
+check "$name" "the statusline runs no quota engine from the current folder" \
+  "d=\$(mktemp -d) && cd \$d && e=sbx/$name/plugins/marketplaces/abrose-plugins/plugins/quota-statusline/bin && mkdir -p \$e \
+  && echo 'open(\"/tmp/statusline-hijack\", \"w\")' > \$e/quota-statusline \
+  && { echo '{}' | SANDBOX_NAME=$name $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-hijack"
 for p in $plugins; do
   check "$name" "plugin $p installed" "claude plugin list 2>&1 | grep -qF '$p'"
 done
