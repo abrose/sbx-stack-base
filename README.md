@@ -40,7 +40,7 @@ marketplace MCP URL asks for OAuth and would put a token in the VM.
 | Build (the recipe) | `files/` goes read-only to `/usr/local/share/sbx-stack` |
 | Install (root) | apt: `zsh eza zoxide starship btop fzf ripgrep fd-find bat shfmt gitleaks`; oh-my-zsh, `fast-syntax-highlighting` and `fzf-tab` at pinned commits; zsh as the login shell; the git aliases and identity in `/etc/gitconfig` |
 | Install (agent) | marketplace adds and plugin installs; one line per step with its exit code in `~/.sbx-stack/plugins.log`, the output in `~/.sbx-stack/plugins.out`; a failure never blocks the sandbox |
-| Every boot (agent) | merges `files/claude/settings.json` into `~/.claude/settings.json`; a second run changes nothing |
+| Every boot (agent) | merges `files/claude/settings.json` into `~/.claude/settings.json`: per hook event, it replaces only its own entries (paths in `/usr/local/share/sbx-stack`) and keeps other layers' entries; a second run changes nothing. A file that is not a JSON object moves to `settings.json.bad.<time>`, logged in `~/.sbx-stack/startup.log` |
 
 Every install step checks first, then installs: a sandbox made from a template runs the install steps again.
 

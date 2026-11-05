@@ -116,14 +116,26 @@ capabilities:
         - command: |
             set -e
             s=/home/agent/.claude/settings.json
-            mkdir -p /home/agent/.claude
-            [ -f "$s" ] || echo '{}' > "$s"
-            jq -s '.[0] * .[1]' "$s" /usr/local/share/sbx-stack/claude/settings.json > "$s.tmp"
+            mkdir -p /home/agent/.claude /home/agent/.sbx-stack
+            if ! jq -e 'type == "object"' "$s" >/dev/null 2>&1; then
+              if [ -e "$s" ]; then
+                mv "$s" "$s.bad.$(date +%s)"
+                echo "$(date -u +%FT%TZ) settings.json was not a JSON object; moved aside" >> /home/agent/.sbx-stack/startup.log
+              fi
+              echo '{}' > "$s"
+            fi
+            jq -s --arg kit /usr/local/share/sbx-stack/ '
+              .[0] as $a | .[1] as $k
+              | ($a * ($k | del(.hooks)))
+              | .hooks = reduce (($k.hooks // {}) | to_entries[]) as $e (($a.hooks // {});
+                  .[$e.key] = ([(.[$e.key] // [])[] | select(tostring | contains($kit) | not)] + $e.value))
+            ' "$s" /usr/local/share/sbx-stack/claude/settings.json > "$s.tmp"
             mv "$s.tmp" "$s"
           user: agent
           description: >-
-            Merges the kit's Claude settings (output style, statusline, hooks) into ~/.claude/settings.json on every
-            boot; the merge replaces the kit's keys, so a second run changes nothing
+            Merges the kit's Claude settings into ~/.claude/settings.json on every boot. Keys merge deeply; for each
+            hook event, the entries that point into /usr/local/share/sbx-stack are replaced and other layers' entries
+            stay, so a second run changes nothing. A file that is not a JSON object is moved aside, never a failed boot
 
   - type: com.docker.sandbox/network-policy@2
     config:

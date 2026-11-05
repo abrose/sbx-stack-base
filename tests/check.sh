@@ -71,14 +71,21 @@ hooks_once "each hook file exists and is in settings.json once"
 check "$name" "github.com is closed at runtime" \
   "[ \"\$(curl -sS -o /dev/null -w '%{http_code}' https://github.com 2>/dev/null || true)\" != 200 ]"
 
+check "$name" "add another layer's PreToolUse hook" \
+  "s=~/.claude/settings.json && jq '.hooks.PreToolUse += [{\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"echo other-layer\"}]}]' \$s > \$s.new && mv \$s.new \$s"
 for i in 1 2 3; do
   sbx stop "$name" >>"$log" 2>&1
   hooks_once "hooks once after stop and start $i"
 done
+check "$name" "another layer's hook survives, once" '[ "$(grep -o other-layer ~/.claude/settings.json | wc -l)" -eq 1 ]'
 for p in $plugins; do
   check "$name" "plugin $p enabled after stop and start" \
     "jq -e --arg p '$p' '.enabledPlugins[\$p] == true' ~/.claude/settings.json >/dev/null"
 done
+check "$name" "empty settings.json" ': > ~/.claude/settings.json'
+sbx stop "$name" >>"$log" 2>&1
+check "$name" "boots after an empty settings.json, the bad file kept" \
+  "[ \"\$(jq -r .outputStyle ~/.claude/settings.json)\" = '$style' ] && ls ~/.claude/settings.json.bad.* >/dev/null"
 
 create "$nomkt" "$nomkt_file"
 check "$nomkt" "a bogus marketplace does not block the sandbox" 'claude plugin list >/dev/null 2>&1'
