@@ -1,0 +1,78 @@
+# zsh config for sbx-stack task sandboxes. The base kit sources it from /etc/zsh/zshrc.
+# SBX_STACK is the kit's read-only share folder. Everything that writes goes to $HOME.
+
+SBX_STACK=/usr/local/share/sbx-stack
+export ZSH="$SBX_STACK/oh-my-zsh"
+export ZSH_CUSTOM="$SBX_STACK/oh-my-zsh-custom"
+export ZSH_CACHE_DIR="$HOME/.cache/oh-my-zsh"
+export ZSH_COMPDUMP="$HOME/.zcompdump"
+mkdir -p "$ZSH_CACHE_DIR/completions"
+zstyle ':omz:update' mode disabled
+
+ZSH_THEME=""
+plugins=(
+  git
+  gitfast
+  docker
+  fast-syntax-highlighting
+  fzf-tab
+)
+
+# fzf before oh-my-zsh, so fzf-tab (loaded with omz) binds TAB last.
+eval "$(fzf --zsh)"
+
+source "$ZSH/oh-my-zsh.sh"
+
+# fzf-tab
+zstyle ':completion:*:git-checkout:*' sort false
+zstyle ':completion:*:descriptions' format '[%d]'
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+zstyle ':completion:*' menu no
+zstyle ':fzf-tab:complete:cd:*' fzf-preview 'eza -1 --color=always $realpath'
+zstyle ':fzf-tab:*' fzf-flags --color=fg:1,fg+:2 --bind=tab:accept
+zstyle ':fzf-tab:*' use-fzf-default-opts yes
+zstyle ':fzf-tab:*' switch-group '<' '>'
+
+# Neovim comes from a later layer; without it, git and the shell keep their default editor.
+if command -v nvim >/dev/null; then
+  export EDITOR='nvim'
+  alias vim='nvim'
+  alias lazyvim='nvim'
+fi
+
+GIT_COMPLETION_CHECKOUT_NO_GUESS=1
+GIT_COMPLETION_SHOW_ALL=1
+
+alias st="git status"
+alias gsm="git switch main"
+alias ls="eza"
+alias ll="eza -la"
+alias cd="z"
+alias top="btop"
+alias fuck="git clean -fd && git restore ."
+
+# Completion menu keys; must come after compinit (oh-my-zsh runs it).
+zmodload zsh/complist
+setopt menu_complete
+zstyle ':completion:*' menu select
+bindkey -M menuselect '^[[A' up-line-or-history
+bindkey -M menuselect '^[[B' down-line-or-history
+bindkey -M menuselect '^[[C' forward-char
+bindkey -M menuselect '^[[D' backward-char
+
+# Interactive search with ripgrep and fzf
+vg() {
+  rg -F --color=always --line-number "$1" | \
+    fzf --ansi --exact --delimiter ':' \
+        --preview 'bat --color=always {1} --highlight-line {2}' \
+        --preview-window '+{2}-10' \
+        --bind 'enter:execute(${EDITOR:-vi} {1} +{2})' \
+        --bind 'ctrl-o:become(${EDITOR:-vi} {1} +{2})'
+}
+
+bindkey -v
+export KEYTIMEOUT=1
+
+export STARSHIP_CONFIG="$SBX_STACK/starship.toml"
+eval "$(starship init zsh)"
+eval "$(zoxide init zsh)"

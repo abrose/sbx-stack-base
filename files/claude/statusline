@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Claude statusline in the VM. Sends the payload to the sbx hook first: sbx's own statusline, which reports
+# session info to Docker Desktop and prints nothing. Then draws the owner's statusline.sh. CLAUDE_CONFIG_DIR is
+# only for its profile chip, which then shows the sandbox name; the quota engine comes from the abrose-plugins
+# marketplace clone in ~/.claude.
+set -euo pipefail
+
+input=$(cat)
+d="$(dirname "$(readlink -f "$0")")"
+hook=/usr/local/bin/sbx-claude-hook
+if [ -x "$hook" ]; then
+  printf '%s' "$input" | "$hook" claude-status || true
+fi
+printf '%s' "$input" | CLAUDE_CONFIG_DIR="sbx/${SANDBOX_NAME:-sandbox}" \
+  CQUOTA_LOG_PATH="$HOME/.claude/usage-log.jsonl" \
+  bash "$d/statusline.sh"

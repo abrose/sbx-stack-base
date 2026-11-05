@@ -1,0 +1,54 @@
+{
+  "outputStyle": "adhd-friendly-simple-technical-english:ADHD-friendly Simple Technical English",
+  "tui": "fullscreen",
+  "statusLine": {
+    "type": "command",
+    "command": "/usr/local/share/sbx-stack/claude/statusline"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "node /usr/local/share/sbx-stack/claude/hooks/block-secret-exposure.mjs",
+            "statusMessage": "Scanning for secret exposure...",
+            "type": "command"
+          },
+          {
+            "command": "node /usr/local/share/sbx-stack/claude/hooks/block-complex-bash.mjs",
+            "statusMessage": "Checking command complexity...",
+            "type": "command"
+          },
+          {
+            "command": "node /usr/local/share/sbx-stack/claude/hooks/block-agent-attribution.mjs",
+            "statusMessage": "Checking commit attribution...",
+            "type": "command"
+          },
+          {
+            "command": "node /usr/local/share/sbx-stack/claude/hooks/block-protected-force-push.mjs",
+            "statusMessage": "Checking for protected force pushes...",
+            "type": "command"
+          },
+          {
+            "command": "node /usr/local/share/sbx-stack/claude/hooks/block-inline-interpreter.mjs",
+            "statusMessage": "Checking for inline scripts...",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bash '/usr/local/share/sbx-stack/claude/hooks/warn-if-no-gitleaks.sh'",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ]
+  }
+}

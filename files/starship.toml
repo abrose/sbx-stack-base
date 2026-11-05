@@ -1,0 +1,165 @@
+# Starship prompt - ported from Powerlevel10k rainbow (Gruvbox Dark Soft)
+# Left: powerline segments | Right: powerline segments | Line 2: prompt char
+
+"$schema" = "https://starship.rs/config-schema.json"
+
+palette = "gruvbox-dark-soft"
+
+format = """
+[░▒▓](white)\
+$os\
+[](fg:white bg:blue)\
+$directory\
+[](fg:blue bg:green)\
+${custom.git_host}\
+$git_branch\
+$git_status\
+[▓▒░](green)\
+$fill\
+$line_break\
+$character"""
+
+right_format = """
+[░▒▓](black)\
+$status\
+$cmd_duration\
+$jobs\
+$direnv\
+$python\
+[](fg:white bg:black)\
+$time\
+[▓▒░](white)\
+"""
+
+# Gruvbox Dark Soft palette - hardcoded so the prompt looks right
+# regardless of terminal theme
+[palettes.gruvbox-dark-soft]
+black = "#3c3836"
+red = "#cc241d"
+green = "#98971a"
+yellow = "#d79921"
+blue = "#458588"
+purple = "#b16286"
+cyan = "#689d6a"
+white = "#a89984"
+bright_black = "#928374"
+bright_red = "#fb4934"
+bright_green = "#b8bb26"
+bright_yellow = "#fabd2f"
+bright_blue = "#83a598"
+bright_purple = "#d3869b"
+bright_cyan = "#8ec07c"
+bright_white = "#fbf1c7"
+
+# ░▒▓ Left-side segments ▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░
+
+[os]
+format = '[ $symbol ](fg:#080808 bg:white)'
+disabled = false
+
+[os.symbols]
+Macos = ""
+
+[directory]
+format = '[ $path ](fg:#e4e4e4 bg:blue)'
+truncation_length = 4
+truncation_symbol = '…/'
+
+[custom.git_host]
+description = 'Git hosting provider icon'
+command = """
+URL=$(command git remote get-url origin 2>/dev/null)
+if [[ "$URL" == *gitlab* ]]; then
+  echo ""
+elif [[ "$URL" == *github* ]]; then
+  echo ""
+elif [[ "$URL" == *bitbucket* ]]; then
+  echo ""
+fi
+"""
+when = 'command git rev-parse --is-inside-work-tree 2>/dev/null'
+shell = ['bash', '--noprofile', '--norc']
+format = '[ $output](fg:black bg:green)'
+
+[git_branch]
+format = '[$symbol$branch(:$remote_branch) ](fg:black bg:green)'
+symbol = ' '
+truncation_length = 32
+truncation_symbol = '…'
+
+[git_status]
+format = '[$all_status$ahead_behind ](fg:black bg:green)'
+ahead = ' ⇡${count}'
+behind = ' ⇣${count}'
+conflicted = ' ~${count}'
+staged = ' +${count}'
+modified = ' !${count}'
+untracked = ' ?${count}'
+stashed = ' *${count}'
+
+# ░▒▓ Right-side segments ▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░
+
+[fill]
+symbol = ' '
+
+[status]
+format = '$symbol'
+success_symbol = '[ ✔ ](fg:green bg:black)'
+symbol = '[ ✘ ](fg:red bg:black)'
+not_executable_symbol = '[ ✘ ](fg:red bg:black)'
+not_found_symbol = '[ ✘ ](fg:red bg:black)'
+sigint_symbol = '[ ✘ ](fg:red bg:black)'
+map_symbol = true
+disabled = false
+
+[cmd_duration]
+format = '[  $duration ](fg:yellow bg:black)'
+min_time = 3_000
+
+[jobs]
+format = '[ ✦ $number ](fg:cyan bg:black)'
+
+[direnv]
+format = '[ $loaded ](fg:yellow bg:black)'
+disabled = false
+
+[python]
+format = '[  $version ](fg:bright_blue bg:black)'
+
+[time]
+format = '[ $time ](fg:#080808 bg:white)'
+disabled = false
+time_format = '%H:%M:%S'
+
+# ░▒▓ Line 2 ▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░
+
+[character]
+success_symbol = '[❯](bright_green)'
+error_symbol = '[❯](bright_red)'
+vimcmd_symbol = '[NORMAL](green)'
+vimcmd_visual_symbol = '[VISUAL](blue)'
+vimcmd_replace_one_symbol = '[OVERTYPE](yellow)'
+vimcmd_replace_symbol = '[OVERTYPE](yellow)'
+
+# ░▒▓ Disabled defaults ▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░▓▒░
+# Suppress modules not in the original p10k config
+[nodejs]
+disabled = true
+
+[rust]
+disabled = true
+
+[golang]
+disabled = true
+
+[java]
+disabled = true
+
+[php]
+disabled = true
+
+[ruby]
+disabled = true
+
+[package]
+disabled = true

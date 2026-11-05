@@ -1,0 +1,140 @@
+# syntax=docker/sandbox-kit:3
+schemaVersion: "3"
+displayName: sbx-stack base
+description: >-
+  zsh with oh-my-zsh and starship, CLI tools, git aliases and identity, and the owner's Claude setup (statusline,
+  output style, hooks, plugins from git marketplaces) for the Debian-based Claude kit 2.1.314
+kind: mixin
+version: "0.1.0"
+
+args:
+  gitUserName:
+    default: ""
+    pattern: "^[^'\\n]*$"
+    description: git user.name in the VM's system config; empty leaves it unset
+  gitUserEmail:
+    default: ""
+    pattern: "^[^'\\n]*$"
+    description: git user.email in the VM's system config; empty leaves it unset
+  plugins:
+    default: ""
+    pattern: "^[A-Za-z0-9@._ -]*$"
+    description: Space-separated name@marketplace, installed after the ever-green plugins
+  marketplaces:
+    default: claude-plugins-official=anthropics/claude-plugins-official abrose-plugins=abrose/claude-plugins
+    pattern: "^[A-Za-z0-9=._/ -]*$"
+    description: Space-separated name=owner/repo on GitHub, added before the plugin installs
+
+capabilities:
+  - type: com.docker.sandbox/lifecycle@1
+    config:
+      install:
+        - command: |
+            set -e
+            need=""
+            for p in zsh eza zoxide starship btop fzf ripgrep fd-find bat shfmt gitleaks; do
+              dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"
+            done
+            if [ -n "$need" ]; then
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $need
+            fi
+            ln -sf /usr/bin/batcat /usr/local/bin/bat
+            ln -sf /usr/bin/fdfind /usr/local/bin/fd
+          user: "0"
+          description: >-
+            Shell and CLI tools from the signed Debian and DHI archives; bat and fd under their usual names.
+            This kit owns the archive rule: sbx refuses the same rule in two kits
+        - command: |
+            set -e
+            s=/usr/local/share/sbx-stack
+            clone() {
+              [ "$(git -C "$1" rev-parse HEAD 2>/dev/null)" = "$3" ] && return 0
+              rm -rf "$1"
+              mkdir -p "$1"
+              git -C "$1" init -q
+              git -C "$1" fetch -q --depth 1 "$2" "$3"
+              git -C "$1" checkout -q FETCH_HEAD
+            }
+            clone "$s/oh-my-zsh" https://github.com/ohmyzsh/ohmyzsh.git 17a2b4c3a5855524ad4772a17ada0dc474e2fdf3
+            clone "$s/oh-my-zsh-custom/plugins/fast-syntax-highlighting" \
+              https://github.com/zdharma-continuum/fast-syntax-highlighting.git 3d574ccf48804b10dca52625df13da5edae7f553
+            clone "$s/oh-my-zsh-custom/plugins/fzf-tab" \
+              https://github.com/Aloxaf/fzf-tab.git 24105b15714bfec37989ed5c5b6e60f572253019
+          user: "0"
+          description: oh-my-zsh and two custom plugins at pinned commits
+        - command: |
+            set -e
+            s=/usr/local/share/sbx-stack
+            grep -qF "$s/zsh/zshrc" /etc/zsh/zshrc || printf '\nsource %s/zsh/zshrc\n' "$s" >> /etc/zsh/zshrc
+            [ -e /home/agent/.zshrc ] || install -o agent -g agent -m 644 /dev/null /home/agent/.zshrc
+            if [ "$(getent passwd agent | cut -d: -f7)" != /usr/bin/zsh ]; then
+              usermod -s /usr/bin/zsh agent
+            fi
+            git config --system --get-all include.path | grep -qxF "$s/git/aliases.gitconfig" \
+              || git config --system --add include.path "$s/git/aliases.gitconfig"
+            name='${{ kit.args.gitUserName }}'
+            email='${{ kit.args.gitUserEmail }}'
+            [ -z "$name" ] || git config --system user.name "$name"
+            [ -z "$email" ] || git config --system user.email "$email"
+          user: "0"
+          description: >-
+            zsh as the login shell with the kit's zshrc (an empty ~/.zshrc skips zsh's first-run wizard), the git
+            aliases, and the git identity from the kit args
+        - command: |
+            d=/home/agent/.sbx-stack
+            log=$d/plugins.log
+            out=$d/plugins.out
+            claude=/home/agent/.local/bin/claude
+            p_json=/home/agent/.claude/plugins
+            mkdir -p "$d"
+            for m in ${{ kit.args.marketplaces }}; do
+              name=${m%%=*}
+              repo=${m#*=}
+              if jq -e --arg n "$name" 'has($n)' "$p_json/known_marketplaces.json" >/dev/null 2>&1; then
+                echo "marketplace add $name $repo rc=0 (already added)" >> "$log"
+                continue
+              fi
+              "$claude" plugin marketplace add "$repo" >> "$out" 2>&1
+              echo "marketplace add $name $repo rc=$?" >> "$log"
+            done
+            for p in adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins \
+              hookify@claude-plugins-official superpowers@claude-plugins-official ${{ kit.args.plugins }}; do
+              if jq -e --arg p "$p" '.plugins | has($p)' "$p_json/installed_plugins.json" >/dev/null 2>&1; then
+                echo "plugin install $p rc=0 (already installed)" >> "$log"
+                continue
+              fi
+              "$claude" plugin install "$p" >> "$out" 2>&1
+              echo "plugin install $p rc=$?" >> "$log"
+            done
+            exit 0
+          user: agent
+          description: >-
+            Marketplaces, then the ever-green plugins, then the plugins arg; one line per step with its exit code in
+            ~/.sbx-stack/plugins.log, details in plugins.out. A failure never blocks the sandbox
+      startup:
+        - command: |
+            set -e
+            s=/home/agent/.claude/settings.json
+            mkdir -p /home/agent/.claude
+            [ -f "$s" ] || echo '{}' > "$s"
+            jq -s '.[0] * .[1]' "$s" /usr/local/share/sbx-stack/claude/settings.json > "$s.tmp"
+            mv "$s.tmp" "$s"
+          user: agent
+          description: >-
+            Merges the kit's Claude settings (output style, statusline, hooks) into ~/.claude/settings.json on every
+            boot; the merge replaces the kit's keys, so a second run changes nothing
+
+  - type: com.docker.sandbox/network-policy@2
+    config:
+      install:
+        allow:
+          # Plugins and oh-my-zsh: git over HTTPS
+          - github.com
+          - codeload.github.com
+          - raw.githubusercontent.com
+          - objects.githubusercontent.com
+          - api.github.com
+          # The Claude kit 2.1.314 is Debian trixie and allows no OS archive itself
+          - hosts: [deb.debian.org, dhi.io]
+            methods: [GET, HEAD]
