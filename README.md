@@ -8,9 +8,11 @@ The design is `docs/specs/2026-11-10-sbx-stack-base-image-design.md` in `sbx-kit
 
 ## Source of truth
 
-This repo holds every file and every pinned version of the image. The configs in `files/` started as a one-time
-seed from the owner's dotfiles (zsh, LazyVim, yazi) and are kept here by hand from now on. Nothing is copied from
-the Mac at build time, except the git `user.name` and `user.email`.
+This repo holds every file of the image and pins its versions, with two exceptions: the apt packages and the
+Claude plugins take their newest version at each build. `build.sh` prints the version and commit of each plugin
+after the build, so a rebuild shows what changed. The configs in `files/` started as a one-time seed from the
+owner's dotfiles (zsh, LazyVim, yazi) and are kept here by hand from now on. Nothing is copied from the Mac at
+build time, except the git `user.name` and `user.email`.
 
 ## Files
 
