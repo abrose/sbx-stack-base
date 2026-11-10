@@ -1,9 +1,0 @@
-schemaVersion: "1"
-agent: sbx-kit-claude
-kits:
-  - docker.io/docker/sbx-kit-claude:2.1.314
-  - source: ..
-    args:
-      marketplaces: bogus=no-such-owner/no-such-repo
-sandboxOptions:
-  skills: "off"

@@ -1,0 +1,12 @@
+zsh
+eza
+zoxide
+starship
+btop
+fzf
+ripgrep
+fd-find
+bat
+shfmt
+gitleaks
+direnv
