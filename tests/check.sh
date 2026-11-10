@@ -1,32 +1,37 @@
 #!/usr/bin/env bash
+# Creates check-base from the loaded template sbx-stack-base:<VERSION>, asserts with sbx exec, asserts again after a
+# stop and start, and removes the sandbox. Run build.sh first.
 # The single-quoted scripts run in the VM: their $ must stay literal here.
 # shellcheck disable=SC2016
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
+version=$(cat "$repo/VERSION")
+tag=sbx-stack-base:$version
 name=check-base
-nomkt=check-base-nomkt
-env_file=$repo/tests/sbxenv.yaml
-nomkt_file=$repo/tests/sbxenv-nomkt.yaml
 share=/usr/local/share/sbx-stack
+managed=/etc/claude-code/managed-settings.json
 hooks="block-secret-exposure.mjs block-complex-bash.mjs block-agent-attribution.mjs block-protected-force-push.mjs
 block-inline-interpreter.mjs warn-if-no-gitleaks.sh"
 plugins="adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins
-hookify@claude-plugins-official superpowers@claude-plugins-official caveman@caveman"
-style=$(jq -r .outputStyle "$repo/files/claude/settings.json")
-log=$(mktemp)
+hookify@claude-plugins-official superpowers@claude-plugins-official"
+tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks"
+email=$(git config --global --get user.email || true)
+tmp=$(mktemp -d)
+log=$tmp/log
+overlay=$tmp/template.yaml
 fails=0
 
+printf 'sandboxOptions:\n  template: %s\n  pullPolicy: never\n' "$tag" >"$overlay"
+
 cleanup() {
-  sbx env rm --force --no-input --name "$name" "$env_file" >/dev/null 2>&1 || true
-  sbx env rm --force --no-input --name "$nomkt" "$nomkt_file" >/dev/null 2>&1 || true
-  rm -f "$log"
+  sbx env rm --force --no-input --name "$name" "$repo/tests/sbxenv.yaml" "$overlay" >/dev/null 2>&1 || true
+  rm -rf "$tmp"
 }
 trap cleanup EXIT
 
-# check <sandbox> <what> <sh script>
-check() {
-  if sbx exec "$1" sh -c "$3" >>"$log" 2>&1; then
+result() {
+  if [ "$1" -eq 0 ]; then
     echo "PASS $2"
   else
     echo "FAIL $2"
@@ -34,62 +39,77 @@ check() {
   fi
 }
 
-create() {
-  if ! sbx env create --force --no-input --name "$1" "$2" >"$log" 2>&1; then
-    tail -20 "$log"
-    echo "FAIL create $1"
-    exit 1
-  fi
+# check <what> <sh script>
+check() {
+  local rc=0
+  sbx exec "$name" sh -c "$2" >>"$log" 2>&1 || rc=$?
+  result "$rc" "$1"
 }
 
-hooks_once() {
-  local h script=""
-  for h in $hooks; do
-    script="$script test -f $share/claude/hooks/$h && [ \"\$(grep -o 'hooks/$h' ~/.claude/settings.json | wc -l)\" -eq 1 ] &&"
+assertions() {
+  local suffix=$1 t h p out rc
+  check "zsh is the login shell$suffix" '[ "$(getent passwd agent | cut -d: -f7)" = /usr/bin/zsh ]'
+  check "zsh loads oh-my-zsh$suffix" "[ \"\$(zsh -lic 'echo \$ZSH' 2>/dev/null | tail -1)\" = $share/oh-my-zsh ]"
+  # zsh needs a terminal for zle: the Mac's script gives sbx exec -it one. The terminal echoes the end of input as
+  # "^D" and two backspaces; tr drops the backspaces and the CRs, the expansion drops the "^D".
+  out=$(script -q /dev/null sbx exec -it "$name" zsh -lic true </dev/null 2>&1 | tr -d '\r\010') || true
+  out=${out#'^D'}
+  printf '%s\n' "$out" >>"$log"
+  rc=0
+  [ -z "$out" ] || {
+    rc=1
+    printf '  zsh output: %q\n' "$out"
+  }
+  result "$rc" "zsh starts with no output$suffix"
+  for t in $tools; do
+    check "$t runs$suffix" "$t --version >/dev/null"
   done
-  check "$name" "$1" "$script true"
+  check "direnv runs$suffix" 'direnv version >/dev/null'
+  check "COLORTERM is truecolor$suffix" "[ \"\$(zsh -lic 'echo \$COLORTERM' 2>/dev/null | tail -1)\" = truecolor ]"
+  check "git aliases$suffix" '[ -n "$(git config --get alias.st)" ]'
+  if [ -n "$email" ]; then
+    check "git user.email from the build$suffix" "[ \"\$(git config --system --get user.email)\" = '$email' ]"
+  else
+    check "git user.email unset$suffix" '! git config --system --get user.email'
+  fi
+  check "managed settings parse$suffix" "jq -e 'type == \"object\"' $managed"
+  check "claude starts$suffix" 'claude --version'
+  for p in $plugins; do
+    check "plugin $p installed and enabled$suffix" "claude plugin list 2>&1 | grep -A3 -F '$p' | grep -qi enabled"
+  done
+  for h in $hooks; do
+    check "hook $h exists and is in the managed settings once$suffix" \
+      "test -f $share/claude/hooks/$h && [ \"\$(grep -o 'hooks/$h' $managed | wc -l)\" -eq 1 ]"
+  done
+  check "the statusline runs no quota engine from the current folder$suffix" \
+    "d=\$(mktemp -d) && cd \$d && e=sbx/$name/plugins/marketplaces/abrose-plugins/plugins/quota-statusline/bin && mkdir -p \$e \
+    && echo 'open(\"/tmp/statusline-hijack\", \"w\")' > \$e/quota-statusline \
+    && { echo '{}' | SANDBOX_NAME=$name $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-hijack"
+  check "the image version file$suffix" "[ \"\$(cut -d' ' -f1 $share/VERSION)\" = $version ]"
+  check "github.com is closed at runtime$suffix" \
+    "[ \"\$(curl -sS -o /dev/null -w '%{http_code}' https://github.com 2>/dev/null || true)\" != 200 ]"
 }
 
-create "$name" "$env_file"
+rc=0
+docker run --rm --entrypoint sh "$tag" -c 'test ! -e /home/agent/.claude/.credentials.json' >>"$log" 2>&1 || rc=$?
+result "$rc" "the image holds no Claude credentials file"
 
-check "$name" "zsh is the login shell" '[ "$(getent passwd agent | cut -d: -f7)" = /usr/bin/zsh ]'
-check "$name" "zsh loads oh-my-zsh" "[ \"\$(zsh -ic 'echo \$ZSH' 2>/dev/null | tail -1)\" = $share/oh-my-zsh ]"
-check "$name" "git user.email from the kit arg" '[ "$(git config --get user.email)" = test@example.com ]'
-check "$name" "git user.name from the kit arg" '[ "$(git config --get user.name)" = "Test User" ]'
-check "$name" "git aliases" '[ -n "$(git config --get alias.st)" ]'
-check "$name" "outputStyle from files/claude/settings.json" "[ \"\$(jq -r .outputStyle ~/.claude/settings.json)\" = '$style' ]"
-check "$name" "statusLine runs the kit's statusline" \
-  "[ \"\$(jq -r .statusLine.command ~/.claude/settings.json)\" = $share/claude/statusline ] && test -x $share/claude/statusline"
-check "$name" "the statusline runs no quota engine from the current folder" \
-  "d=\$(mktemp -d) && cd \$d && e=sbx/$name/plugins/marketplaces/abrose-plugins/plugins/quota-statusline/bin && mkdir -p \$e \
-  && echo 'open(\"/tmp/statusline-hijack\", \"w\")' > \$e/quota-statusline \
-  && { echo '{}' | SANDBOX_NAME=$name $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-hijack"
-for p in $plugins; do
-  check "$name" "plugin $p installed" "claude plugin list 2>&1 | grep -qF '$p'"
-done
-hooks_once "each hook file exists and is in settings.json once"
-check "$name" "github.com is closed at runtime" \
-  "[ \"\$(curl -sS -o /dev/null -w '%{http_code}' https://github.com 2>/dev/null || true)\" != 200 ]"
+start=$SECONDS
+if ! sbx env create --force --no-input --name "$name" "$repo/tests/sbxenv.yaml" "$overlay" >"$log" 2>&1; then
+  tail -20 "$log"
+  echo "FAIL create $name"
+  exit 1
+fi
+echo "created $name in $((SECONDS - start))s"
 
-check "$name" "add another layer's PreToolUse hook" \
-  "s=~/.claude/settings.json && jq '.hooks.PreToolUse += [{\"matcher\": \"Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"echo other-layer\"}]}]' \$s > \$s.new && mv \$s.new \$s"
-for i in 1 2 3; do
-  sbx stop "$name" >>"$log" 2>&1
-  hooks_once "hooks once after stop and start $i"
-done
-check "$name" "another layer's hook survives, once" '[ "$(grep -o other-layer ~/.claude/settings.json | wc -l)" -eq 1 ]'
-for p in $plugins; do
-  check "$name" "plugin $p enabled after stop and start" \
-    "jq -e --arg p '$p' '.enabledPlugins[\$p] == true' ~/.claude/settings.json >/dev/null"
-done
-check "$name" "empty settings.json" ': > ~/.claude/settings.json'
+assertions ""
 sbx stop "$name" >>"$log" 2>&1
-check "$name" "boots after an empty settings.json, the bad file kept" \
-  "[ \"\$(jq -r .outputStyle ~/.claude/settings.json)\" = '$style' ] && ls ~/.claude/settings.json.bad.* >/dev/null"
+# The first exec after a stop starts the sandbox and prints sbx's own "started" line; keep it out of the zsh check.
+sbx exec "$name" true >>"$log" 2>&1
+assertions " (after stop and start)"
 
-create "$nomkt" "$nomkt_file"
-check "$nomkt" "a bogus marketplace does not block the sandbox" 'claude plugin list >/dev/null 2>&1'
-check "$nomkt" "plugins.log has the failed marketplace add" \
-  "grep -E '^marketplace add bogus .* rc=[1-9]' ~/.sbx-stack/plugins.log"
-
-[ "$fails" -eq 0 ]
+[ "$fails" -eq 0 ] || {
+  echo "$fails failed"
+  exit 1
+}
+echo "all passed"

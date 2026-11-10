@@ -76,9 +76,9 @@ export KEYTIMEOUT=1
 export STARSHIP_CONFIG="$SBX_STACK/starship.toml"
 eval "$(starship init zsh)"
 eval "$(zoxide init zsh)"
-eval "$(direnv hook zsh)"
+(( $+commands[direnv] )) && eval "$(direnv hook zsh)"
 # worktrunk: lets `wt switch` change the shell's folder
-eval "$(wt config shell init zsh)"
+(( $+commands[wt] )) && eval "$(wt config shell init zsh)"
 
 # yazi: y leaves the shell in the folder yazi was in at exit
 y() {

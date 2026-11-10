@@ -2,11 +2,5 @@ schemaVersion: "1"
 agent: sbx-kit-claude
 kits:
   - docker.io/docker/sbx-kit-claude:2.1.314
-  - source: ..
-    args:
-      gitUserName: Test User
-      gitUserEmail: test@example.com
-      plugins: caveman@caveman
-      marketplaces: claude-plugins-official=anthropics/claude-plugins-official abrose-plugins=abrose/claude-plugins caveman=JuliusBrussee/caveman
 sandboxOptions:
   skills: "off"
