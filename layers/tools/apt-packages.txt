@@ -11,3 +11,4 @@ shfmt
 gitleaks
 direnv
 file
+xz-utils

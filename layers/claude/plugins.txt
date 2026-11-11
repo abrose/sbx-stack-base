@@ -1,0 +1,6 @@
+marketplace anthropics/claude-plugins-official
+marketplace abrose/claude-plugins
+plugin adhd-friendly-simple-technical-english@abrose-plugins
+plugin quota-statusline@abrose-plugins
+plugin hookify@claude-plugins-official
+plugin superpowers@claude-plugins-official

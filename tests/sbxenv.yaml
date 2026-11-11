@@ -1,6 +1,6 @@
 schemaVersion: "1"
 agent: sbx-kit-claude
 kits:
-  - docker.io/docker/sbx-kit-claude:2.1.314
+  - docker.io/docker/sbx-kit-claude:latest
 sandboxOptions:
   skills: "off"

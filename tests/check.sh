@@ -16,6 +16,7 @@ block-inline-interpreter.mjs warn-if-no-gitleaks.sh"
 plugins="adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins
 hookify@claude-plugins-official superpowers@claude-plugins-official"
 tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks file yazi ya wt"
+recorded="claude-code zsh oh-my-zsh fast-syntax-highlighting fzf-tab yazi wt"
 email=$(git config --global --get user.email || true)
 tmp=$(mktemp -d)
 log=$tmp/log
@@ -24,9 +25,13 @@ fails=0
 
 printf 'sandboxOptions:\n  template: %s\n  pullPolicy: never\n' "$tag" >"$overlay"
 
+# When bash stops the script on an unset variable, it exits with the status of this trap, so the trap fails unless
+# the script reached its end.
+passed=0
 cleanup() {
   sbx env rm --force --no-input --name "$name" "$repo/tests/sbxenv.yaml" "$overlay" >/dev/null 2>&1 || true
   rm -rf "$tmp"
+  [ "$passed" -eq 1 ] || exit 1
 }
 trap cleanup EXIT
 
@@ -68,13 +73,13 @@ blocked_downloads() {
 # The plugins whose lock entry in the sandbox differs from the repo's, as "name: repo -> sandbox" lines.
 lock_diff() {
   sbx exec "$name" cat /home/agent/.config/nvim/lazy-lock.json |
-    jq -r --slurpfile repo_lock "$repo/files/nvim/lazy-lock.json" \
+    jq -r --slurpfile repo_lock "$repo/layers/nvim/config/lazy-lock.json" \
       'def c: if . then "\(.branch)@\(.commit[0:12])" else "none" end; . as $i | $repo_lock[0] as $r | ($i + $r | keys[]) as $k | select($i[$k] != $r[$k]) | "\($k): \($r[$k] | c) -> \($i[$k] | c)"'
 }
 
 # run_lua <file in $tmp>: runs the repo's nvim-build/run-lua on the file in an offline container of the image.
 run_lua() {
-  docker run --rm --pull never --network none --entrypoint sh -v "$repo/nvim-build/run-lua:/tmp/run-lua:ro" \
+  docker run --rm --pull never --network none --entrypoint sh -v "$repo/layers/nvim/run-lua:/tmp/run-lua:ro" \
     -v "$tmp/$1:/tmp/t.lua:ro" "$tag" /tmp/run-lua /tmp/t.lua >>"$log" 2>&1
 }
 
@@ -144,6 +149,11 @@ assertions() {
     "d=\$(mktemp -d) && cd \$d && e=sbx/$name/plugins/marketplaces/abrose-plugins/plugins/quota-statusline/bin && mkdir -p \$e \
     && echo 'open(\"/tmp/statusline-hijack\", \"w\")' > \$e/quota-statusline \
     && { echo '{}' | SANDBOX_NAME=$name $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-hijack"
+  for t in $recorded $plugins; do
+    check "versions.txt names $t$suffix" "grep -q ' $t ' $share/versions.txt"
+  done
+  check "every line of versions.txt has a layer, a name and a version$suffix" \
+    "! grep -qvE '^[^ ]+ [^ ]+ [^ ]+\$' $share/versions.txt"
   check "the image version file$suffix" "[ \"\$(cut -d' ' -f1 $share/VERSION)\" = $version ]"
   check "github.com is closed at runtime$suffix" \
     "[ \"\$(curl -sS -o /dev/null -w '%{http_code}' https://github.com 2>/dev/null || true)\" != 200 ]"
@@ -188,3 +198,4 @@ assertions " (after stop and start)"
   exit 1
 }
 echo "all passed"
+passed=1
