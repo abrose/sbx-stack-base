@@ -17,6 +17,9 @@ bash tests/check.sh     # creates the sandbox check-base from the template, asse
 `build.sh` prints the image size and the version and commit of each Claude plugin. `tests/check.sh` asserts
 everything twice: after the create, and again after a stop and start.
 
+A project template (`sbx-task template <project>` in `sbx-kit-builder`) holds the base it was saved from. After a
+rebuild, run `sbx-task template <project>` again for each project with a template. `sbx-task new` warns until then.
+
 | Number (2026-11-11, Apple silicon) | Value |
 |---|---|
 | Image size | 3697 MB; the Claude kit image alone is 3054 MB |
