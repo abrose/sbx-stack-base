@@ -10,3 +10,4 @@ bat
 shfmt
 gitleaks
 direnv
+file

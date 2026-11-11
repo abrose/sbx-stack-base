@@ -15,7 +15,7 @@ hooks="block-secret-exposure.mjs block-complex-bash.mjs block-agent-attribution.
 block-inline-interpreter.mjs warn-if-no-gitleaks.sh"
 plugins="adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins
 hookify@claude-plugins-official superpowers@claude-plugins-official"
-tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks"
+tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks file yazi ya wt"
 email=$(git config --global --get user.email || true)
 tmp=$(mktemp -d)
 log=$tmp/log
@@ -46,8 +46,34 @@ check() {
   result "$rc" "$1"
 }
 
+# nvim_check <what> <lua>: runs the Lua in a headless nvim with the LazyVim config. Headless nvim writes its messages
+# to stderr, so the check also fails on any message.
+nvim_check() {
+  local err rc=0
+  err=$(sbx exec "$name" nvim --headless "+lua $2" +qa 2>&1 >/dev/null) || rc=$?
+  [ -z "$err" ] || {
+    rc=1
+    printf '  nvim stderr: %s\n' "$err"
+  }
+  result "$rc" "$1"
+}
+
+# The sandbox's blocked requests to the hosts of a plugin or parser download, as "host count" lines.
+blocked_downloads() {
+  sbx policy log "$name" --json |
+    jq -r '.blocked[] | select(.host | test("^(github\\.com|api\\.github\\.com|objects\\.githubusercontent\\.com|registry\\.npmjs\\.org):")) | "\(.host) \(.count)"' |
+    sort
+}
+
+# The plugins whose lock entry in the sandbox differs from the repo's, as "name: repo -> sandbox" lines.
+lock_diff() {
+  sbx exec "$name" cat /home/agent/.config/nvim/lazy-lock.json |
+    jq -r --slurpfile repo_lock "$repo/files/nvim/lazy-lock.json" \
+      'def c: if . then "\(.branch)@\(.commit[0:12])" else "none" end; . as $i | $repo_lock[0] as $r | ($i + $r | keys[]) as $k | select($i[$k] != $r[$k]) | "\($k): \($r[$k] | c) -> \($i[$k] | c)"'
+}
+
 assertions() {
-  local suffix=$1 t h p out rc
+  local suffix=$1 t h p out rc before after
   check "zsh is the login shell$suffix" '[ "$(getent passwd agent | cut -d: -f7)" = /usr/bin/zsh ]'
   check "zsh loads oh-my-zsh$suffix" "[ \"\$(zsh -lic 'echo \$ZSH' 2>/dev/null | tail -1)\" = $share/oh-my-zsh ]"
   # zsh needs a terminal for zle: the Mac's script gives sbx exec -it one. The terminal echoes the end of input as
@@ -65,7 +91,33 @@ assertions() {
     check "$t runs$suffix" "$t --version >/dev/null"
   done
   check "direnv runs$suffix" 'direnv version >/dev/null'
+  check "nvim is 0.11.2 or newer$suffix" \
+    "nvim --clean --headless '+lua os.exit(vim.version.lt(vim.version(), {0, 11, 2}) and 1 or 0)'"
+  check "zsh has y and wt as functions or commands$suffix" \
+    '[ "$(zsh -lic "whence -w y wt" 2>/dev/null | grep -cE ": (function|command)$")" -eq 2 ]'
+  check "zsh has the direnv hook$suffix" "zsh -lic 'typeset -f _direnv_hook >/dev/null' 2>/dev/null"
+  rc=0
+  out=$(lock_diff 2>&1) || rc=1
+  [ -z "$out" ] || {
+    rc=1
+    printf '  lock differs:\n%s\n' "$out"
+  }
+  result "$rc" "the image's lazy-lock.json is the repo's$suffix"
+  before=$(blocked_downloads)
+  # nvim-treesitter's own parser folder: Neovim's bundled parsers (c, lua, markdown, vim, vimdoc) do not count.
+  nvim_check "nvim-treesitter has every parser of LazyVim's list$suffix" \
+    'local have = require("nvim-treesitter").get_installed("parsers"); for _, l in ipairs(LazyVim.opts("nvim-treesitter").ensure_installed) do assert(vim.list_contains(have, l), "no parser: " .. l) end'
+  nvim_check "nvim knows more than 20 plugins$suffix" 'assert(#require("lazy").plugins() > 20)'
+  nvim_check "blink.cmp has its Rust matcher$suffix" 'assert(require("blink.cmp").library_available(), "no Rust matcher")'
+  after=$(blocked_downloads)
+  rc=0
+  [ "$before" = "$after" ] || {
+    rc=1
+    printf '  blocked before:\n%s\n  blocked after:\n%s\n' "$before" "$after"
+  }
+  result "$rc" "the nvim runs make no request to GitHub or npm$suffix"
   check "COLORTERM is truecolor$suffix" "[ \"\$(zsh -lic 'echo \$COLORTERM' 2>/dev/null | tail -1)\" = truecolor ]"
+  check "the .config folder belongs to agent$suffix" '[ "$(stat -c %U ~/.config)" = agent ]'
   check "git aliases$suffix" '[ -n "$(git config --get alias.st)" ]'
   if [ -n "$email" ]; then
     check "git user.email from the build$suffix" "[ \"\$(git config --system --get user.email)\" = '$email' ]"
@@ -93,6 +145,12 @@ assertions() {
 rc=0
 docker run --rm --entrypoint sh "$tag" -c 'test ! -e /home/agent/.claude/.credentials.json' >>"$log" 2>&1 || rc=$?
 result "$rc" "the image holds no Claude credentials file"
+
+rc=0
+docker run --rm --entrypoint sh "$tag" -c \
+  '[ -z "$(find /home/agent/.local/share/nvim/lazy -mindepth 2 -maxdepth 2 -name target -type d 2>/dev/null)" ]' \
+  >>"$log" 2>&1 || rc=$?
+result "$rc" "the image holds no cargo build files"
 
 start=$SECONDS
 if ! sbx env create --force --no-input --name "$name" "$repo/tests/sbxenv.yaml" "$overlay" >"$log" 2>&1; then

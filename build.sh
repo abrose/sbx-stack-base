@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds sbx-stack-base:<VERSION> and loads it into sbx as a template. --force replaces a loaded template of the
-# same version. Prints the image size and the version and commit of each Claude plugin: the plugins have no pin.
+# same version. The apt packages and the Claude plugins have no pin: each build installs their newest version, and
+# the script prints the version and commit of each plugin.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -23,6 +24,7 @@ fi
 
 revision=$(git rev-parse HEAD)
 docker build --platform linux/arm64 \
+  --build-arg REFRESH="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --build-arg GIT_USER_NAME="$(git config --global --get user.name || true)" \
   --build-arg GIT_USER_EMAIL="$(git config --global --get user.email || true)" \
   --build-arg VERSION="$version" \

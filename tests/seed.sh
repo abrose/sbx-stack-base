@@ -41,6 +41,8 @@ check "nvim: lazyvim.json and lazy-lock.json exist" test -f files/nvim/lazyvim.j
 check "nvim: no language, dap, test, prettier or eslint extras except lang.git" \
   no_match '"lazyvim\.plugins\.extras\.(lang\.[a-z.]+|dap\.core|test\.core|formatting\.prettier|linting\.eslint)"' \
   <(jq -r '.extras[] | select(. != "lazyvim.plugins.extras.lang.git") | "\"" + . + "\""' files/nvim/lazyvim.json)
+check "nvim: no reference to a dropped plugin" no_match -r 'minuet|chezmoi|herdr|tmux-navigator|gitlab|markdown-preview|wishes|vitest|dap-vscode' files/nvim/lua
+check "nvim: no Mac-only command" no_match -r '"open"|pbcopy|pbpaste|osascript' files/nvim/lua
 check "nvim: the lock has no plugin of the dropped files" \
   no_match "$dropped_plugins" files/nvim/lazy-lock.json
 check "no Mac paths in files/" \

@@ -30,9 +30,9 @@ require("lazy").setup({
     version = false, -- always use the latest git commit
     -- version = "*", -- try installing the latest stable version for plugins that support semver
   },
-  -- The sandbox allows no GitHub at runtime: the image build installs every plugin, and nothing installs or checks
-  -- for updates at start.
-  install = { missing = false, colorscheme = { "tokyonight", "habamax" } },
+  -- The sandbox allows no GitHub at runtime. The image build installs every plugin at its lock commit, so a start
+  -- in the sandbox finds nothing to install, and nothing checks for updates.
+  install = { colorscheme = { "tokyonight", "habamax" } },
   checker = { enabled = false },
   change_detection = { enabled = false },
   performance = {

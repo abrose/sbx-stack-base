@@ -29,15 +29,7 @@ return {
     -- C-k: Toggle signature help (if signature.enabled = true)
     --
     -- See :h blink-cmp-config-keymap for defining your own keymap
-    keymap = {
-      preset = "default",
-      -- <Alt-y> manually triggers minuet completions
-      ["<A-y>"] = {
-        function(cmp)
-          cmp.show({ providers = { "minuet" } })
-        end,
-      },
-    },
+    keymap = { preset = "default" },
 
     -- (Default) Only show the documentation popup when manually triggered
     completion = { documentation = { auto_show = false } },
@@ -46,15 +38,6 @@ return {
     -- elsewhere in your config, without redefining it, due to `opts_extend`
     sources = {
       default = { "lsp", "path", "snippets", "buffer" },
-      -- Don't add 'minuet' to `default` — that would auto-trigger on every
-      -- keystroke and rack up API calls. Manual-only is the sane default.
-      providers = {
-        minuet = {
-          name = "minuet",
-          module = "minuet.blink",
-          score_offset = 100, -- float minuet items to the top when present
-        },
-      },
     },
     -- (Default) Rust fuzzy matcher for typo resistance and significantly better performance
     -- You may use a lua implementation instead by using `implementation = "lua"`
