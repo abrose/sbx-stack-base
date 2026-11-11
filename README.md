@@ -58,7 +58,7 @@ The Dockerfile has build-only stages. Only the last stage ships.
 | `fetch` | installs xz-utils and a `fetch` script that fails when the sha256 of a download differs |
 | `releases` | downloads Neovim, yazi, worktrunk and the tree-sitter CLI |
 | `rust` | installs Rust from the three official files rustc, cargo and rust-std |
-| `nvim-build` | clones lazy.nvim and LazyVim at their lock commits, then starts nvim once: lazy.nvim installs the other plugins at their lock commits, nvim-treesitter builds the parsers, and cargo builds blink.cmp's matcher. A verify step fails the build when a plugin, a parser or the matcher is missing |
+| `nvim-build` | clones lazy.nvim and LazyVim at their lock commits, then starts nvim once: lazy.nvim installs the other plugins at their lock commits, nvim-treesitter builds the parsers, and cargo builds blink.cmp's matcher. A verify step fails the build when a plugin, a parser or the matcher is missing. It runs through `nvim-build/run-lua`, so an error in the verify script also fails the build |
 | final | the Claude kit image with the apt packages, zsh, the configs and the Claude plugins, plus the release files and the Neovim files from the stages above |
 
 `build.sh` passes the build time as the build arg `REFRESH`. So each build runs the apt install and the Claude
@@ -117,6 +117,7 @@ bash build.sh --force && bash tests/check.sh
 |---|---|
 | `Dockerfile` | the build; every pinned version is an ARG or a commit |
 | `build.sh` | docker build, docker image save, sbx template load |
+| `nvim-build/run-lua` | runs a Lua file in the build's headless nvim and exits 1 on a Lua error; the verify step uses it |
 | `VERSION` | the image version |
 | `apt-packages.txt` | the Debian packages, one per line |
 | `files/zsh/zshrc` | the zsh config, sourced from `/etc/zsh/zshrc` |

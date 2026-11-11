@@ -1,0 +1,7 @@
+#!/bin/sh
+# run-lua <file>: runs a Lua file in a headless nvim with the user's config. A Lua error in the file exits 1;
+# nvim "+luafile <file>" +qa prints the error and exits 0.
+export RUN_LUA_FILE="$1"
+exec nvim --headless \
+  "+lua local ok, err = pcall(dofile, os.getenv('RUN_LUA_FILE')) if not ok then io.stderr:write(tostring(err) .. '\n') vim.cmd('cquit 1') end" \
+  +qa

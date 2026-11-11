@@ -52,6 +52,7 @@ check "zshrc: worktrunk shell init" grep -q 'wt config shell init zsh' files/zsh
 check "zshrc: COLORTERM=truecolor" grep -q 'COLORTERM=truecolor' files/zsh/zshrc
 check "zshrc: yazi y() and rr" grep -qE '^(function )?y\(\)' files/zsh/zshrc
 check "zshrc: alias rr" grep -q 'alias rr=' files/zsh/zshrc
+check "the Dockerfile runs verify.lua through run-lua" grep -qx 'RUN run-lua /tmp/verify.lua' Dockerfile
 check "the kit files are gone" absent base.yaml base.dockerfile host/sync-from-mac.sh tests/sbxenv-nomkt.yaml \
   files/claude/settings.json
 

@@ -72,6 +72,12 @@ lock_diff() {
       'def c: if . then "\(.branch)@\(.commit[0:12])" else "none" end; . as $i | $repo_lock[0] as $r | ($i + $r | keys[]) as $k | select($i[$k] != $r[$k]) | "\($k): \($r[$k] | c) -> \($i[$k] | c)"'
 }
 
+# run_lua <file in $tmp>: runs the repo's nvim-build/run-lua on the file in an offline container of the image.
+run_lua() {
+  docker run --rm --pull never --network none --entrypoint sh -v "$repo/nvim-build/run-lua:/tmp/run-lua:ro" \
+    -v "$tmp/$1:/tmp/t.lua:ro" "$tag" /tmp/run-lua /tmp/t.lua >>"$log" 2>&1
+}
+
 assertions() {
   local suffix=$1 t h p out rc before after
   check "zsh is the login shell$suffix" '[ "$(getent passwd agent | cut -d: -f7)" = /usr/bin/zsh ]'
@@ -151,6 +157,16 @@ docker run --rm --entrypoint sh "$tag" -c \
   '[ -z "$(find /home/agent/.local/share/nvim/lazy -mindepth 2 -maxdepth 2 -name target -type d 2>/dev/null)" ]' \
   >>"$log" 2>&1 || rc=$?
 result "$rc" "the image holds no cargo build files"
+
+# The build's verify step runs through run-lua: an error in the Lua must fail the step.
+printf 'error("raised on purpose")\n' >"$tmp/raise.lua"
+printf 'os.exit(1)\n' >"$tmp/exit1.lua"
+printf 'vim.g.run_lua_clean = true\n' >"$tmp/clean.lua"
+rc=0
+run_lua raise.lua && rc=1
+run_lua exit1.lua && rc=1
+run_lua clean.lua || rc=1
+result "$rc" "run-lua fails on a Lua error and on os.exit(1), and passes a clean file"
 
 start=$SECONDS
 if ! sbx env create --force --no-input --name "$name" "$repo/tests/sbxenv.yaml" "$overlay" >"$log" 2>&1; then

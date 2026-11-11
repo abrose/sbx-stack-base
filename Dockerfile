@@ -132,7 +132,10 @@ RUN set -e; \
 RUN nvim --headless "+Lazy! restore" "+luafile /tmp/install-parsers.lua" +qa
 # blink.cmp keeps its library in lib/; target/ holds only cargo's build files (110 MB).
 RUN rm -rf /home/agent/.local/share/nvim/lazy/blink.cmp/target
-RUN nvim --headless "+luafile /tmp/verify.lua" +qa
+# The verify step is the gate for the steps above. run-lua exits 1 when verify.lua raises an error; nvim
+# "+luafile <file>" +qa exits 0 after one.
+COPY --chmod=755 nvim-build/run-lua /usr/local/bin/run-lua
+RUN run-lua /tmp/verify.lua
 
 FROM claude-kit
 LABEL sbx-stack.claude-kit=2.1.314
