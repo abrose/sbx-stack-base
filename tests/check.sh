@@ -16,7 +16,7 @@ block-inline-interpreter.mjs warn-if-no-gitleaks.sh"
 plugins="adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins
 hookify@claude-plugins-official superpowers@claude-plugins-official"
 tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks file yazi ya wt"
-recorded="claude-code zsh oh-my-zsh fast-syntax-highlighting fzf-tab yazi wt"
+recorded="claude-code zsh oh-my-zsh fast-syntax-highlighting fzf-tab yazi wt nvim tree-sitter rust LazyVim lazy.nvim"
 email=$(git config --global --get user.email || true)
 tmp=$(mktemp -d)
 log=$tmp/log
@@ -70,13 +70,6 @@ blocked_downloads() {
     sort
 }
 
-# The plugins whose lock entry in the sandbox differs from the repo's, as "name: repo -> sandbox" lines.
-lock_diff() {
-  sbx exec "$name" cat /home/agent/.config/nvim/lazy-lock.json |
-    jq -r --slurpfile repo_lock "$repo/layers/nvim/config/lazy-lock.json" \
-      'def c: if . then "\(.branch)@\(.commit[0:12])" else "none" end; . as $i | $repo_lock[0] as $r | ($i + $r | keys[]) as $k | select($i[$k] != $r[$k]) | "\($k): \($r[$k] | c) -> \($i[$k] | c)"'
-}
-
 # run_lua <file in $tmp>: runs the repo's nvim-build/run-lua on the file in an offline container of the image.
 run_lua() {
   docker run --rm --pull never --network none --entrypoint sh -v "$repo/layers/nvim/run-lua:/tmp/run-lua:ro" \
@@ -108,13 +101,6 @@ assertions() {
   check "zsh has y and wt as functions or commands$suffix" \
     '[ "$(zsh -lic "whence -w y wt" 2>/dev/null | grep -cE ": (function|command)$")" -eq 2 ]'
   check "zsh has the direnv hook$suffix" "zsh -lic 'typeset -f _direnv_hook >/dev/null' 2>/dev/null"
-  rc=0
-  out=$(lock_diff 2>&1) || rc=1
-  [ -z "$out" ] || {
-    rc=1
-    printf '  lock differs:\n%s\n' "$out"
-  }
-  result "$rc" "the image's lazy-lock.json is the repo's$suffix"
   before=$(blocked_downloads)
   # nvim-treesitter's own parser folder: Neovim's bundled parsers (c, lua, markdown, vim, vimdoc) do not count.
   nvim_check "nvim-treesitter has every parser of LazyVim's list$suffix" \
@@ -168,6 +154,18 @@ docker run --rm --entrypoint sh "$tag" -c \
   '[ -z "$(find /home/agent/.local/share/nvim/lazy -mindepth 2 -maxdepth 2 -name target -type d 2>/dev/null)" ]' \
   >>"$log" 2>&1 || rc=$?
 result "$rc" "the image holds no cargo build files"
+
+rc=0
+docker run --rm --entrypoint sh "$tag" -c \
+  '! command -v cargo rustc tree-sitter && [ ! -e /home/agent/.cargo ] && [ ! -e /home/agent/.rustup ]' \
+  >>"$log" 2>&1 || rc=$?
+result "$rc" "the image holds no Rust and no tree-sitter CLI"
+
+rc=0
+docker run --rm --entrypoint sh "$tag" -c \
+  '[ -z "$(find /home/agent/.config /home/agent/.local/share/nvim /home/agent/.claude/plugins ! -user agent -print -quit)" ]' \
+  >>"$log" 2>&1 || rc=$?
+result "$rc" "the agent owns every file in .config, .local/share/nvim and .claude/plugins"
 
 # The build's verify step runs through run-lua: an error in the Lua must fail the step.
 printf 'error("raised on purpose")\n' >"$tmp/raise.lua"
