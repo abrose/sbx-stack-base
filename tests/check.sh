@@ -83,9 +83,10 @@ assertions() {
   check "zsh is the login shell$suffix" '[ "$(getent passwd agent | cut -d: -f7)" = /usr/bin/zsh ]'
   check "zsh loads oh-my-zsh$suffix" "[ \"\$(zsh -lic 'echo \$ZSH' 2>/dev/null | tail -1)\" = $share/oh-my-zsh ]"
   # zsh needs a terminal for zle: the Mac's script gives sbx exec -it one. The terminal echoes the end of input as
-  # "^D" and two backspaces; tr drops the backspaces and the CRs, the expansion drops the "^D".
+  # "^D" and two backspaces, in some runs twice (1 run in 20 on 2026-11-11); tr drops the backspaces and the CRs, the
+  # expansion drops every "^D".
   out=$(script -q /dev/null sbx exec -it "$name" zsh -lic true </dev/null 2>&1 | tr -d '\r\010') || true
-  out=${out#'^D'}
+  out=${out//'^D'/}
   printf '%s\n' "$out" >>"$log"
   rc=0
   [ -z "$out" ] || {
