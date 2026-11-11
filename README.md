@@ -19,12 +19,21 @@ An update is the same command as the first build. Nothing in the repo holds a ve
 1. `build.sh` builds the image. It pulls the newest Claude kit image and runs every layer again.
 2. It loads the image into sbx as `sbx-stack-base:<VERSION>`.
 3. It runs `tests/check.sh` on the new template.
-4. If the check passes, it prints the image size and what the image holds. The image it replaced is kept as
-   `sbx-stack-base:previous`.
-5. If the check fails, it loads the replaced image again and exits 1. If the build fails, it loads nothing.
+4. If the check passes, the new image becomes `sbx-stack-base:good`, and the image that was `good` becomes
+   `sbx-stack-base:previous`. `build.sh` prints the image size and what the image holds.
+5. If the check fails, it loads `sbx-stack-base:good` again and exits 1. If the build fails, it loads nothing.
 
-`build.sh --rollback` is for a bad image that the check did not catch. It loads `sbx-stack-base:previous`, the last
-image that passed the check and was replaced. Only an image that passed can become `previous`.
+`build.sh --rollback` is for a bad image that the check did not catch. It loads `sbx-stack-base:previous`, the image
+that was good before the last one. Only a passed check or a rollback moves `good`, so only an image that passed can
+become `previous`.
+
+What to know about the three tags (`<VERSION>`, `good`, `previous`):
+
+- The new template is loaded while its check runs. If you stop `build.sh` during the check, the unchecked template
+  stays loaded. Run `build.sh` again: `good` did not move.
+- The tags live in docker. `docker image prune -a` and `docker system prune -a` remove them, and the loaded sbx
+  template stays. The next `build.sh` then warns that it cannot restore an earlier image, before it builds.
+- On the first build there is no `good` image. If its check fails, the failed template stays loaded.
 
 A project template (`sbx-task template <project>` in `sbx-kit-builder`) holds the base it was saved from. After an
 update, run `sbx-task template <project>` again for each project with a template. `sbx-task new` warns until then.

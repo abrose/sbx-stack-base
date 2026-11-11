@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Builds sbx-stack-base:<VERSION> with the newest version of everything, loads it into sbx as a template and runs
-# tests/check.sh on it. When the check fails, the image that was loaded before comes back.
-# build.sh --rollback loads the last image that passed the check and was replaced by a newer one.
+# tests/check.sh on it. When the check fails, the last image that passed the check comes back.
+# build.sh --rollback loads the image that passed the check before the last one.
+#
+# Three docker tags hold the state:
+#   sbx-stack-base:<VERSION>  the image that is loaded into sbx
+#   sbx-stack-base:good       the last image that passed the check; only a passed check or a rollback moves it
+#   sbx-stack-base:previous   the image that was good before that one
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -17,7 +22,7 @@ esac
 
 version=$(cat VERSION)
 tag=sbx-stack-base:$version
-replaced=sbx-stack-base:replaced
+good=sbx-stack-base:good
 previous=sbx-stack-base:previous
 check=${SBX_STACK_CHECK:-tests/check.sh}
 tmp=$(mktemp -d)
@@ -47,15 +52,17 @@ if [ "$rollback" -eq 1 ]; then
   }
   docker tag "$previous" "$tag"
   load
-  echo "loaded the last good image as $tag"
+  docker tag "$previous" "$good"
+  echo "loaded the image that was good before the last one as $tag"
   finished=1
   exit 0
 fi
 
-had_image=0
-if exists "$tag"; then
-  docker tag "$tag" "$replaced"
-  had_image=1
+had_good=0
+if exists "$good"; then
+  had_good=1
+else
+  echo "docker has no $good image: if the check of this build fails, build.sh cannot restore an earlier image" >&2
 fi
 
 revision=$(git rev-parse HEAD)
@@ -67,28 +74,24 @@ if ! docker build --pull --platform linux/arm64 \
   --build-arg REVISION="$revision" \
   --label org.opencontainers.image.revision="$revision" \
   -t "$tag" .; then
-  [ "$had_image" -eq 0 ] || docker image rm "$replaced" >/dev/null
   echo "the build failed: the loaded template is unchanged" >&2
   exit 1
 fi
 
 load
 if ! "$check"; then
-  if [ "$had_image" -eq 1 ]; then
-    docker tag "$replaced" "$tag"
-    docker image rm "$replaced" >/dev/null
+  if [ "$had_good" -eq 1 ]; then
+    docker tag "$good" "$tag"
     load
-    echo "the check failed: restored the image that was loaded before" >&2
+    echo "the check failed: restored the last image that passed the check" >&2
   else
-    echo "the check failed: there is no earlier image to restore, so $tag stays loaded" >&2
+    echo "the check failed: there is no earlier image to restore, so the failed $tag stays loaded" >&2
   fi
   exit 1
 fi
 
-if [ "$had_image" -eq 1 ]; then
-  docker tag "$replaced" "$previous"
-  docker image rm "$replaced" >/dev/null
-fi
+[ "$had_good" -eq 0 ] || docker tag "$good" "$previous"
+docker tag "$tag" "$good"
 docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "size of %s: %.0f MB\n", "'"$tag"'", $1 / 1e6}'
 echo "what $tag holds (layer, name, version):"
 docker run --rm --entrypoint cat "$tag" /usr/local/share/sbx-stack/versions.txt
