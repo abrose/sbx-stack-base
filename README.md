@@ -221,7 +221,7 @@ Nothing is copied from the Mac at build time, except the git `user.name` and `us
 | Neovim | the LazyVim config; every plugin at its newest commit; the treesitter parsers of LazyVim's list; blink.cmp's Rust matcher | `~/.config/nvim`, `~/.local/share/nvim` |
 | yazi | the yazi config | `~/.config/yazi` |
 | git | the aliases; `user.name` and `user.email` from the Mac's global git config at build time | `/etc/gitconfig` |
-| Claude | the managed settings, the statusline, the safety hooks, and the plugins of `layers/claude/plugins.txt` | `/etc/claude-code/`, `/usr/local/share/sbx-stack/claude/`, `~/.claude/plugins` |
+| Claude | the managed settings (with the default model Opus 5.5 at high effort), the statusline, the safety hooks, and the plugins of `layers/claude/plugins.txt` | `/etc/claude-code/`, `/usr/local/share/sbx-stack/claude/`, `~/.claude/plugins` |
 | Version | `<VERSION> <repo commit>`, and `versions.txt` | `/usr/local/share/sbx-stack/` |
 
 Not in the image: the build tools (Rust, the tree-sitter CLI), cargo's build files and the apt lists.

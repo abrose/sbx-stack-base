@@ -1,4 +1,6 @@
 {
+  "model": "claude-opus-5-5",
+  "effortLevel": "high",
   "outputStyle": "adhd-friendly-simple-technical-english:ADHD-friendly Simple Technical English",
   "tui": "fullscreen",
   "statusLine": {

@@ -85,6 +85,8 @@ check "the Dockerfile holds no commit ARG and no clone function" no_match '_COMM
 check "managed settings: an object with 4 enabled plugins" \
   jq -e 'type == "object" and (.enabledPlugins | length) == 4 and all(.enabledPlugins[]; . == true)' \
   layers/claude/managed-settings.json
+check "managed settings: the default model is Opus 5.5 with high effort" \
+  jq -e '.model == "claude-opus-5-5" and .effortLevel == "high"' layers/claude/managed-settings.json
 check "nvim: the dropped plugin files are gone" \
   absent "${dropped_files[@]/#/$nvim/lua/plugins/}"
 check "nvim: the kept plugin files are there" \

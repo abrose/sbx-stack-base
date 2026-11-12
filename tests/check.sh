@@ -123,6 +123,8 @@ assertions() {
     check "git user.email unset$suffix" '! git config --system --get user.email'
   fi
   check "managed settings parse$suffix" "jq -e 'type == \"object\"' $managed"
+  check "the default model is Opus 5.5 with high effort$suffix" \
+    "jq -e '.model == \"claude-opus-5-5\" and .effortLevel == \"high\"' $managed"
   check "claude starts$suffix" 'claude --version'
   for p in $plugins; do
     check "plugin $p installed and enabled$suffix" "claude plugin list 2>&1 | grep -A3 -F '$p' | grep -qi enabled"
