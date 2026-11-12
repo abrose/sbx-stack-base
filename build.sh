@@ -75,6 +75,12 @@ exists() {
   docker image inspect "$1" >/dev/null 2>&1
 }
 
+# newest_kit: prints the newest version tag (x.y.z) of the Claude kit image on Docker Hub.
+newest_kit() {
+  curl -fsS 'https://hub.docker.com/v2/repositories/docker/sbx-kit-claude/tags?page_size=100&ordering=last_updated' |
+    jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1
+}
+
 # read_lock: writes the plugin lock of the good image to $lock; fails when the lock is not a filled JSON object.
 read_lock() {
   docker run --rm --entrypoint cat "$good" /home/agent/.config/nvim/lazy-lock.json >"$lock" &&
@@ -106,12 +112,28 @@ else
   echo "docker has no $good image: if the check of this build fails, build.sh cannot restore an earlier image" >&2
 fi
 
+# The Claude kit image is the base of the image. Its tag "latest" can be behind its newest version tag, so an
+# update of everything (and the first build) looks up the newest version tag. Every other build keeps the kit of
+# the good image, which records it as a label.
+kit=latest
+if [ "$pull" -eq 1 ] || [ "$had_good" -eq 0 ]; then
+  kit=$(newest_kit) || kit=""
+  [ -n "$kit" ] || {
+    echo "cannot find the newest Claude kit tag on Docker Hub" >&2
+    exit 1
+  }
+else
+  kit=$(docker image inspect "$good" --format '{{index .Config.Labels "sbx-stack.claude-kit"}}')
+  [ -n "$kit" ] || kit=latest
+fi
+
 # Each layer has a refresh value, the time of its last update. The image records the values as labels. A layer
 # that keeps the value of the good image comes from the build cache as the good image has it. A new value runs the
 # layer again, so the layer takes its newest versions; the layers after it in the Dockerfile run again too.
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 lock=$tmp/lazy-lock.json
 options=(--platform linux/arm64 --secret "id=lazy-lock,src=$lock")
+options+=(--build-arg "CLAUDE_KIT=$kit" --label "sbx-stack.claude-kit=$kit")
 [ "$pull" -eq 0 ] || options=(--pull "${options[@]}")
 nvim_refresh=$now
 for layer in $(all_layers); do

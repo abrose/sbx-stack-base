@@ -35,6 +35,7 @@ case "$1 ${2:-}" in
     [ -n "$(image_of "$3")" ] || exit 1
     # STUB_LABEL is the value of every sbx-stack.refresh.<layer> label of every image.
     case "$*" in
+      *sbx-stack.claude-kit*) echo "${STUB_KIT:-}" ;;
       *sbx-stack.refresh.*) echo "${STUB_LABEL:-}" ;;
       *) echo 1000000 ;;
     esac
@@ -73,7 +74,14 @@ cat >"$bin/sbx" <<'EOF'
 #!/usr/bin/env bash
 echo "sbx $*" >>"$STUB_LOG"
 EOF
-chmod +x "$bin/docker" "$bin/sbx"
+# The curl stub answers the tag list of the Claude kit image; STUB_TAGS=fail makes it fail.
+cat >"$bin/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "curl $*" >>"$STUB_LOG"
+[ "${STUB_TAGS:-ok}" != fail ] || exit 22
+echo '{"results":[{"name":"latest"},{"name":"2.1.99"},{"name":"2.1.316"},{"name":"2.1.314"},{"name":"2.2.0-rc1"}]}'
+EOF
+chmod +x "$bin/docker" "$bin/sbx" "$bin/curl"
 
 cp "$repo/build.sh" "$repo/VERSION" "$work/"
 for layer in tools zsh git worktrunk yazi claude nvim; do
@@ -190,6 +198,31 @@ images "$tag" old "$good" old
 build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --update yazi
 expect "update yazi: nvim keeps its value" called "--build-arg REFRESH_NVIM=T0 "
 expect "update yazi: the build gets the plugin lock of the good image" lock_is '{"stub":"lock"}'
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 STUB_KIT=2.1.314 --
+expect "no update: the build keeps the Claude kit of the good image" called "--build-arg CLAUDE_KIT=2.1.314 "
+expect "no update: the image records its Claude kit" called "--label sbx-stack.claude-kit=2.1.314 "
+expect "no update: no lookup of the newest Claude kit" not_called "curl "
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 --
+expect "no update, a good image with no kit label: the kit is latest" called "--build-arg CLAUDE_KIT=latest "
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 STUB_KIT=2.1.314 -- --update
+expect "update: the build takes the newest version tag of the Claude kit" called "--build-arg CLAUDE_KIT=2.1.316 "
+expect "update: the image records the new Claude kit" called "--label sbx-stack.claude-kit=2.1.316 "
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 STUB_KIT=2.1.314 -- --update nvim
+expect "update nvim: the build keeps the Claude kit of the good image" called "--build-arg CLAUDE_KIT=2.1.314 "
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 STUB_KIT=2.1.314 STUB_TAGS=fail -- --update
+expect "update, the tag lookup fails: exit 1" exit_is 1
+expect "update, the tag lookup fails: says so" said "cannot find the newest Claude kit"
+expect "update, the tag lookup fails: no build" not_called "docker build"
 
 for lock_state in fail broken; do
   images "$tag" old "$good" old

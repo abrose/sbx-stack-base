@@ -3,7 +3,10 @@
 # A step runs again when a file of its layer changed, or when build.sh passes a new REFRESH_<LAYER> value
 # (build.sh --update). A step that runs again takes the newest versions, and the steps after it run again too.
 # Each step mounts only layers/lib.sh and its own layer folder, so an edit in one layer leaves the others alone.
-FROM docker.io/docker/sbx-kit-claude:latest AS claude-kit
+# build.sh passes the tag of the Claude kit image: the newest version tag for an update of everything, and the
+# tag of the last good image for every other build.
+ARG CLAUDE_KIT=latest
+FROM docker.io/docker/sbx-kit-claude:${CLAUDE_KIT} AS claude-kit
 
 # Build-only stage: its tools (Rust, the tree-sitter CLI) do not ship. The two steps write their result to /out.
 # The plugin lock comes in as a secret mount, because a secret is not part of a step's cache key: a different lock

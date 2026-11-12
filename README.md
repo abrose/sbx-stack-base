@@ -28,8 +28,8 @@ it got. The setup in `layers/` is the owner's taste. To make it yours, fork the 
 | A Mac with Apple silicon | the image is `linux/arm64`, and the layers download arm64 release files |
 | Docker Desktop with BuildKit | `docker build` with bind, cache and secret mounts |
 | `sbx` v0.53.0 or newer, signed in | `sbx template load`, `sbx env`; the check creates a real sandbox |
-| bash, git, jq | `build.sh` and the tests; the Mac's bash 3.2 is enough |
-| Network access at build time | the Claude kit image, apt, GitHub releases and clones, rustup |
+| bash, git, jq, curl | `build.sh` and the tests; the Mac's bash 3.2 is enough |
+| Network access at build time | the Claude kit image and its tag list on Docker Hub, apt, GitHub releases and clones, rustup |
 
 Optional: `shellcheck` and `gitleaks`, if you change the scripts.
 
@@ -178,7 +178,7 @@ Three things follow:
   message. `build.sh --update <layer>` gives the layer a new refresh value and ends that.
 - **The cache is Docker's.** After `docker builder prune` or Docker's own cache cleanup, every layer builds again
   with its newest versions.
-- **Only `--update` with no layer name pulls the Claude kit image.** A new kit image builds every layer again.
+- **Only `--update` with no layer name takes a newer Claude kit image.** A new kit image builds every layer again.
 
 The `nvim` layer keeps more than the others, because it builds in two steps:
 
@@ -213,7 +213,7 @@ Nothing is copied from the Mac at build time, except the git `user.name` and `us
 
 | Part | Content | Where |
 |---|---|---|
-| Base | the Claude kit image `docker/sbx-kit-claude:latest`: Debian trixie, Claude Code, the user `agent` | |
+| Base | the Claude kit image `docker/sbx-kit-claude` at its newest version tag: Debian trixie, Claude Code, the user `agent` | |
 | CLI tools from apt | zsh, eza, zoxide, starship, btop, fzf, ripgrep, fd-find, bat, shfmt, gitleaks, direnv, file, xz-utils; `bat` and `fd` under their usual names | `/usr/bin`, links in `/usr/local/bin` |
 | CLI tools from release files | Neovim, yazi (`yazi`, `ya`), worktrunk (`wt`, `git-wt`) | `/usr/local/bin`; Neovim in `/opt/nvim` |
 | zsh | the login shell of `agent`; oh-my-zsh with fast-syntax-highlighting and fzf-tab; the zshrc, sourced from `/etc/zsh/zshrc` | `/usr/local/share/sbx-stack/` |
@@ -225,7 +225,9 @@ Nothing is copied from the Mac at build time, except the git `user.name` and `us
 
 Not in the image: the build tools (Rust, the tree-sitter CLI), cargo's build files and the apt lists.
 
-`latest` of the Claude kit is not always its newest version tag (fact F14 in `sbx-kit-builder`). The base image
+`latest` of the Claude kit is not always its newest version tag (fact F14 in `sbx-kit-builder`). So `build.sh
+--update` and the first build ask Docker Hub for the newest version tag (`x.y.z`) and build on it. Every other
+build keeps the kit of `sbx-stack-base:good`, which records it as the label `sbx-stack.claude-kit`. The base image
 decides which Claude Code a sandbox runs, not the kit tag in a project file.
 
 ## The layers
@@ -302,6 +304,7 @@ stop and start.
 | `Dockerfile` | wires the layers together: one `RUN` per layer, no version, no logic |
 | `build.sh` | docker build, docker image save, sbx template load, the check, the rollback |
 | `VERSION` | the image version; it changes only when the layout of the image changes |
+| `LICENSE` | the MIT license |
 | `layers/lib.sh` | the helpers of the layer scripts |
 | `layers/<name>/` | one layer: `install.sh`, optional build scripts, and its files |
 | `tests/seed.sh` | static checks of the files |
