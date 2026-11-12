@@ -75,6 +75,12 @@ exists() {
   docker image inspect "$1" >/dev/null 2>&1
 }
 
+# read_lock: writes the plugin lock of the good image to $lock; fails when the lock is not a filled JSON object.
+read_lock() {
+  docker run --rm --entrypoint cat "$good" /home/agent/.config/nvim/lazy-lock.json >"$lock" &&
+    jq -e 'type == "object" and length > 0' "$lock" >/dev/null
+}
+
 load() {
   docker image save "$tag" -o "$tmp/image.tar"
   sbx template load "$tmp/image.tar"
@@ -123,7 +129,11 @@ done
 # its commit and only a new plugin takes its newest one. An empty lock gives every plugin its newest commit.
 echo '{}' >"$lock"
 if [ "$nvim_refresh" != "$now" ]; then
-  docker run --rm --entrypoint cat "$good" /home/agent/.config/nvim/lazy-lock.json >"$lock"
+  # A missing or broken lock must stop the build: with it, every plugin would take its newest commit.
+  if ! read_lock; then
+    echo "cannot read the plugin lock of $good: run build.sh --update nvim to build without it" >&2
+    exit 1
+  fi
 fi
 
 revision=$(git rev-parse HEAD)

@@ -50,7 +50,13 @@ case "$1 ${2:-}" in
     echo "$3 $id" >>"$STUB_STATE"
     ;;
   run\ *)
-    case "$*" in *lazy-lock.json*) echo '{"stub":"lock"}' ;; esac
+    case "$*" in
+      *lazy-lock.json*)
+        [ "${STUB_LOCK:-ok}" != fail ] || exit 1
+        [ "${STUB_LOCK:-ok}" != broken ] || exit 0
+        echo '{"stub":"lock"}'
+        ;;
+    esac
     ;;
   build\ *)
     [ "${STUB_BUILD_FAIL:-0}" -eq 0 ] || exit 1
@@ -184,6 +190,14 @@ images "$tag" old "$good" old
 build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --update yazi
 expect "update yazi: nvim keeps its value" called "--build-arg REFRESH_NVIM=T0 "
 expect "update yazi: the build gets the plugin lock of the good image" lock_is '{"stub":"lock"}'
+
+for lock_state in fail broken; do
+  images "$tag" old "$good" old
+  build SBX_STACK_CHECK=true STUB_LABEL=T0 "STUB_LOCK=$lock_state" --
+  expect "the plugin lock read is $lock_state: exit 1" exit_is 1
+  expect "the plugin lock read is $lock_state: says so" said "cannot read the plugin lock"
+  expect "the plugin lock read is $lock_state: no build" not_called "docker build"
+done
 
 for bad in "--update nope" "--update ../tools" "--update ." "--rollback now" "--update nvim --rollback"; do
   # shellcheck disable=SC2086

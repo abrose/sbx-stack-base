@@ -55,7 +55,7 @@ update, run `sbx-task template <project>` again for each project with a template
 A layer that does not build again comes from Docker's build cache, exactly as it was. A layer that builds again
 takes the newest version of everything in it.
 
-Each layer has a refresh value: the time of its last update. The image records the values as labels, and
+Each layer has a refresh value: the time of its last `--update`. The image records the values as labels, and
 `build.sh` passes the values of `sbx-stack-base:good` again for every layer that `--update` does not name:
 
 ```bash
@@ -67,13 +67,20 @@ Three things follow:
 - **A layer that builds again also builds the layers after it again.** The order is tools, zsh, git, worktrunk,
   yazi, claude, nvim. For example, an edit in `layers/yazi/` or `--update yazi` also updates the `claude` layer.
   The `nvim` layer is last and builds in its own stage, so a change there touches no other layer.
-- **The cache is Docker's.** After `docker builder prune`, every layer builds again with its newest versions.
+- **An edit in `layers/lib.sh` builds every layer again,** because every layer reads it. Neovim, the tree-sitter
+  CLI and Rust then take their newest versions too. Only the plugins keep their commits.
+- **The same files give the same old layer.** A layer that builds again because of a file edit keeps its refresh
+  value. If you later put the files back as they were (a revert, another branch), Docker finds the cache entry
+  from before the edit, and the layer and the layers after it go back to the versions of that build, with no
+  message. `build.sh --update <layer>` gives the layer a new refresh value and ends that.
+- **The cache is Docker's.** After `docker builder prune` or Docker's own cache cleanup, every layer builds again
+  with its newest versions.
 - **Only `--update` with no layer name pulls the Claude kit image.** A new kit image builds every layer again.
 
 The `nvim` layer keeps more than the others, because it builds in two steps:
 
-- **Tools** (`build-tools.sh`): Neovim, the tree-sitter CLI and Rust. They change only with `--update` or
-  `--update nvim`.
+- **Tools** (`build-tools.sh`): Neovim, the tree-sitter CLI and Rust. They change with `--update`, with
+  `--update nvim`, and after an edit of `build-tools.sh` or `layers/lib.sh`.
 - **Plugins** (`build.sh`): the config, the plugins, the parsers and the matcher. This step runs again when a file
   in `layers/nvim/` changed. Each plugin then keeps its commit, and only a new plugin takes its newest commit:
   `build.sh` reads the plugin lock (`lazy-lock.json`) out of the image `sbx-stack-base:good` and hands it to the
