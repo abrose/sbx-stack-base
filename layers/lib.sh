@@ -6,6 +6,21 @@ fetch_latest() {
   curl -fsSLo "$3" "https://github.com/$1/releases/latest/download/$2"
 }
 
+# latest_version <owner/repo>: prints the version of the newest GitHub release, without the leading v.
+# For a project that has the version in the names of its release assets.
+latest_version() {
+  local url version
+  url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest") || return 1
+  version=${url##*/tag/v}
+  [ "$version" != "$url" ] && [ -n "$version" ] || return 1
+  printf '%s\n' "$version"
+}
+
+# fetch_release <owner/repo> <version> <asset> <file>: downloads an asset of the release v<version>.
+fetch_release() {
+  curl -fsSLo "$4" "https://github.com/$1/releases/download/v$2/$3"
+}
+
 # clone_head <url> <dir>: copies the newest commit of the default branch to the folder and prints the commit.
 clone_head() {
   git clone -q --depth 1 "$1" "$2" &&

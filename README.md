@@ -11,7 +11,7 @@ that also holds a full terminal setup, so each new sandbox has it from the first
 
 - zsh with oh-my-zsh, a prompt and the usual CLI tools (ripgrep, fd, bat, fzf, eza, zoxide, direnv, ...)
 - Neovim with LazyVim, every plugin and treesitter parser already installed
-- yazi, worktrunk, git aliases
+- yazi, lazygit, lazydocker, worktrunk, git aliases
 - Claude Code settings, a statusline, safety hooks and plugins
 
 `build.sh` builds the image, loads it into sbx as the template `sbx-stack-base:<VERSION>`, and checks it in a real
@@ -168,7 +168,8 @@ docker image inspect sbx-stack-base:good --format '{{json .Config.Labels}}' | jq
 Three things follow:
 
 - **A layer that builds again also builds the layers after it again.** The order is tools, zsh, git, worktrunk,
-  yazi, claude, nvim. For example, an edit in `layers/yazi/` or `--update yazi` also updates the `claude` layer.
+  yazi, lazygit, lazydocker, claude, nvim. For example, an edit in `layers/yazi/` or `--update yazi` also updates
+  the layers `lazygit`, `lazydocker` and `claude`.
   The `nvim` layer is last and builds in its own stage, so a change there touches no other layer.
 - **An edit in `layers/lib.sh` builds every layer again,** because every layer reads it. Neovim, the tree-sitter
   CLI and Rust then take their newest versions too. Only the plugins keep their commits.
@@ -215,7 +216,7 @@ Nothing is copied from the Mac at build time, except the git `user.name` and `us
 |---|---|---|
 | Base | the Claude kit image `docker/sbx-kit-claude` at its newest version tag: Debian trixie, Claude Code, the user `agent` | |
 | CLI tools from apt | zsh, eza, zoxide, starship, btop, fzf, ripgrep, fd-find, bat, shfmt, gitleaks, direnv, file, xz-utils; `bat` and `fd` under their usual names | `/usr/bin`, links in `/usr/local/bin` |
-| CLI tools from release files | Neovim, yazi (`yazi`, `ya`), worktrunk (`wt`, `git-wt`) | `/usr/local/bin`; Neovim in `/opt/nvim` |
+| CLI tools from release files | Neovim, yazi (`yazi`, `ya`), worktrunk (`wt`, `git-wt`), lazygit, lazydocker | `/usr/local/bin`; Neovim in `/opt/nvim` |
 | zsh | the login shell of `agent`; oh-my-zsh with fast-syntax-highlighting and fzf-tab; the zshrc, sourced from `/etc/zsh/zshrc` | `/usr/local/share/sbx-stack/` |
 | Neovim | the LazyVim config; every plugin at its newest commit; the treesitter parsers of LazyVim's list; blink.cmp's Rust matcher | `~/.config/nvim`, `~/.local/share/nvim` |
 | yazi | the yazi config | `~/.config/yazi` |
@@ -241,6 +242,8 @@ A layer is a folder in `layers/`. It holds everything about one concern: its scr
 | `git` | the aliases and the git identity | `aliases.gitconfig` |
 | `worktrunk` | `wt` and `git-wt` | |
 | `yazi` | `yazi`, `ya` and the config | `config/` |
+| `lazygit` | `lazygit` | |
+| `lazydocker` | `lazydocker` | |
 | `claude` | the managed settings, the statusline, the hooks, the plugins | `managed-settings.json`, `statusline*`, `hooks/`, `plugins.txt` |
 | `nvim` | Neovim, the LazyVim config, the plugins, the parsers, the matcher | `config/`, `install-parsers.lua`, `verify.lua`, `run-lua` |
 

@@ -15,8 +15,8 @@ hooks="block-secret-exposure.mjs block-complex-bash.mjs block-agent-attribution.
 block-inline-interpreter.mjs warn-if-no-gitleaks.sh"
 plugins="adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins
 hookify@claude-plugins-official superpowers@claude-plugins-official"
-tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks file yazi ya wt"
-recorded="claude-code zsh oh-my-zsh fast-syntax-highlighting fzf-tab yazi wt nvim tree-sitter rust LazyVim lazy.nvim"
+tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks file yazi ya wt lazygit lazydocker"
+recorded="claude-code zsh oh-my-zsh fast-syntax-highlighting fzf-tab yazi wt lazygit lazydocker nvim tree-sitter rust LazyVim lazy.nvim"
 email=$(git config --global --get user.email || true)
 tmp=$(mktemp -d)
 log=$tmp/log

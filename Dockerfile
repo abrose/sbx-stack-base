@@ -48,6 +48,14 @@ ARG REFRESH_YAZI
 RUN --mount=type=bind,source=layers/lib.sh,target=/layers/lib.sh \
     --mount=type=bind,source=layers/yazi,target=/layers/yazi \
     /layers/yazi/install.sh
+ARG REFRESH_LAZYGIT
+RUN --mount=type=bind,source=layers/lib.sh,target=/layers/lib.sh \
+    --mount=type=bind,source=layers/lazygit,target=/layers/lazygit \
+    /layers/lazygit/install.sh
+ARG REFRESH_LAZYDOCKER
+RUN --mount=type=bind,source=layers/lib.sh,target=/layers/lib.sh \
+    --mount=type=bind,source=layers/lazydocker,target=/layers/lazydocker \
+    /layers/lazydocker/install.sh
 ARG REFRESH_CLAUDE
 RUN --mount=type=bind,source=layers/lib.sh,target=/layers/lib.sh \
     --mount=type=bind,source=layers/claude,target=/layers/claude \

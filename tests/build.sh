@@ -84,7 +84,7 @@ EOF
 chmod +x "$bin/docker" "$bin/sbx" "$bin/curl"
 
 cp "$repo/build.sh" "$repo/VERSION" "$work/"
-for layer in tools zsh git worktrunk yazi claude nvim; do
+for layer in tools zsh git worktrunk yazi lazygit lazydocker claude nvim; do
   mkdir -p "$work/layers/$layer"
   : >"$work/layers/$layer/install.sh"
 done
@@ -149,7 +149,7 @@ images "$tag" old "$good" old "$previous" older
 build SBX_STACK_CHECK=true STUB_LABEL=T0 --
 expect "check passes: exit 0" exit_is 0
 expect "no update: the build does not pull the base" not_called "--pull"
-for name in TOOLS ZSH GIT WORKTRUNK YAZI CLAUDE NVIM; do
+for name in TOOLS ZSH GIT WORKTRUNK YAZI LAZYGIT LAZYDOCKER CLAUDE NVIM; do
   expect "no update: the layer $name gets the refresh value of the good image" called "--build-arg REFRESH_$name=T0 "
 done
 expect "no update: the image records the refresh value of a layer" called "--label sbx-stack.refresh.nvim=T0 "
@@ -178,7 +178,7 @@ build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --update
 expect "update: exit 0" exit_is 0
 expect "update: the build pulls the base" called "docker build --pull"
 expect "update: no layer keeps the refresh value of the good image" not_called "=T0 "
-for name in TOOLS ZSH GIT WORKTRUNK YAZI CLAUDE NVIM; do
+for name in TOOLS ZSH GIT WORKTRUNK YAZI LAZYGIT LAZYDOCKER CLAUDE NVIM; do
   expect "update: the layer $name is refreshed" called "--build-arg REFRESH_$name=2"
 done
 expect "update: the plugin lock is empty" lock_is '{}'

@@ -45,7 +45,7 @@ count() {
 
 lib_functions() {
   local f
-  for f in fetch_latest clone_head record as_agent; do
+  for f in fetch_latest latest_version fetch_release clone_head record as_agent; do
     grep -q "^$f()" layers/lib.sh || return 1
   done
 }
@@ -75,8 +75,8 @@ nvim=layers/nvim/config
 
 check "each layer has an executable install.sh" \
   executable layers/tools/install.sh layers/zsh/install.sh layers/git/install.sh layers/yazi/install.sh \
-  layers/worktrunk/install.sh layers/claude/install.sh
-check "lib.sh defines fetch_latest, clone_head, record and as_agent" lib_functions
+  layers/worktrunk/install.sh layers/lazygit/install.sh layers/lazydocker/install.sh layers/claude/install.sh
+check "lib.sh defines fetch_latest, latest_version, fetch_release, clone_head, record and as_agent" lib_functions
 check "plugins.txt names 2 marketplaces" count 2 '^marketplace ' layers/claude/plugins.txt
 check "plugins.txt names 4 plugins" count 4 '^plugin ' layers/claude/plugins.txt
 check "every curl in layers/ fails on an HTTP error" curl_fails_on_error
