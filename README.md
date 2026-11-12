@@ -1,8 +1,102 @@
 # sbx-stack-base
 
-The base image of sbx-stack: the owner's personal setup for Docker Sandboxes (sbx), built from one folder per layer
-and loaded into sbx as the template `sbx-stack-base:<VERSION>`. Every project file names it as its template. Project
-layers (node, gitlab, ...) stay kits in the project file.
+A personal base image for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`), built from one folder
+per layer.
+
+## What this repo does
+
+Docker Sandboxes runs a coding agent (here: Claude Code) in a microVM on your machine. A new sandbox starts from an
+image, and the stock image has the agent and little else. This repo builds an image on top of the stock Claude image
+that also holds a full terminal setup, so each new sandbox has it from the first second:
+
+- zsh with oh-my-zsh, a prompt and the usual CLI tools (ripgrep, fd, bat, fzf, eza, zoxide, direnv, ...)
+- Neovim with LazyVim, every plugin and treesitter parser already installed
+- yazi, worktrunk, git aliases
+- Claude Code settings, a statusline, safety hooks and plugins
+
+`build.sh` builds the image, loads it into sbx as the template `sbx-stack-base:<VERSION>`, and checks it in a real
+sandbox. A project then names the template in its `sbxenv.yaml`. The tools and languages of one project (node,
+dotnet, ...) do not belong here: they stay sbx kits in the project file.
+
+The repo pins no version. A layer takes the newest version of its tools when it builds, and the image records what
+it got. The setup in `layers/` is the owner's taste. To make it yours, fork the repo and edit the layers.
+
+## Requirements
+
+| What | Why |
+|---|---|
+| A Mac with Apple silicon | the image is `linux/arm64`, and the layers download arm64 release files |
+| Docker Desktop with BuildKit | `docker build` with bind, cache and secret mounts |
+| `sbx` v0.53.0 or newer, signed in | `sbx template load`, `sbx env`; the check creates a real sandbox |
+| bash, git, jq | `build.sh` and the tests; the Mac's bash 3.2 is enough |
+| Network access at build time | the Claude kit image, apt, GitHub releases and clones, rustup |
+
+Optional: `shellcheck` and `gitleaks`, if you change the scripts.
+
+The build reads the global git `user.name` and `user.email` of the Mac and writes them into the image, so commits
+in a sandbox carry your identity. It copies nothing else from the Mac.
+
+## How to use it in a project
+
+1. Build the image and load it as a template. The first build takes about 2 minutes:
+
+   ```bash
+   git clone https://github.com/abrose/sbx-stack-base.git
+   bash sbx-stack-base/build.sh
+   ```
+
+2. Confirm that sbx has the template:
+
+   ```bash
+   sbx template ls
+   ```
+
+3. Put a file `sbxenv.yaml` into the root of your project. This one is the minimum:
+
+   ```yaml
+   schemaVersion: "1"
+   agent: sbx-kit-claude
+   kits:
+     - docker.io/docker/sbx-kit-claude:latest
+   workspace: .
+   sandboxOptions:
+     template: sbx-stack-base:0.2.0
+     pullPolicy: never
+   ```
+
+   - `template` is the image of this repo. The tag is the content of the file `VERSION`.
+   - `pullPolicy: never` tells sbx to use the loaded template and not to look for it in a registry.
+   - `workspace: .` mounts the project folder into the sandbox, at the same path as on the Mac.
+   - The Claude kit stays in `kits`: it tells sbx how to run the agent. The base image decides which Claude Code
+     version runs, not this tag.
+
+4. Create the sandbox. sbx shows a plan and asks before it acts:
+
+   ```bash
+   sbx env create --name my-task sbxenv.yaml
+   ```
+
+5. Work in it:
+
+   ```bash
+   sbx env run --name my-task sbxenv.yaml   # start or join the Claude session
+   sbx exec -it my-task zsh                 # a shell in the sandbox
+   ```
+
+6. Remove the sandbox when the work is pushed:
+
+   ```bash
+   sbx env rm --name my-task sbxenv.yaml
+   ```
+
+Without the loaded template, `sbx env create` fails with `image ... is not cached locally and pull_policy=never`.
+Run `build.sh` first.
+
+A project file can hold more: ports, environment variables, secrets, more kits. See the sbx documentation for
+`sbxenv.yaml`. After `build.sh` built a new image, existing sandboxes keep the image they started from; only a new
+sandbox gets the new one.
+
+## Designs
 
 The designs are in `docs/specs/`:
 
