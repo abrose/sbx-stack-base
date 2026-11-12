@@ -4,8 +4,17 @@ The base image of sbx-stack: the owner's personal setup for Docker Sandboxes (sb
 and loaded into sbx as the template `sbx-stack-base:<VERSION>`. Every project file names it as its template. Project
 layers (node, gitlab, ...) stay kits in the project file.
 
-The designs are `docs/specs/2026-11-10-sbx-stack-base-image-design.md` (what the image holds) and
-`docs/specs/2026-11-11-sbx-stack-base-layers-design.md` (how it builds) in `sbx-kit-builder`.
+The designs are in `docs/specs/`:
+
+| Design | Content |
+|---|---|
+| [2026-11-10-sbx-stack-base-image-design.md](docs/specs/2026-11-10-sbx-stack-base-image-design.md) | what the image holds, and why it is an image and not a kit |
+| [2026-11-11-sbx-stack-base-layers-design.md](docs/specs/2026-11-11-sbx-stack-base-layers-design.md) | the build from one folder per layer, with no pins |
+| [2026-11-12-sbx-stack-base-selective-update-design.md](docs/specs/2026-11-12-sbx-stack-base-selective-update-design.md) | `--update` and the plugin lock |
+
+A later design changes the earlier ones where they differ. The designs name `sbx-kit-builder`: the owner's repo
+with the task tool `sbx-task`, the plans and the sbx facts (F1 to F14) with their probes. It is not public; each
+fact that a design depends on is stated in the design.
 
 ## Build, update, roll back
 
