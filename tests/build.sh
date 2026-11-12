@@ -33,7 +33,11 @@ untag() {
 case "$1 ${2:-}" in
   "image inspect")
     [ -n "$(image_of "$3")" ] || exit 1
-    echo 1000000
+    # STUB_LABEL is the value of every sbx-stack.refresh.<layer> label of every image.
+    case "$*" in
+      *sbx-stack.refresh.*) echo "${STUB_LABEL:-}" ;;
+      *) echo 1000000 ;;
+    esac
     ;;
   "image rm")
     [ -n "$(image_of "$3")" ] || exit 1
@@ -45,9 +49,15 @@ case "$1 ${2:-}" in
     untag "$3"
     echo "$3 $id" >>"$STUB_STATE"
     ;;
+  run\ *)
+    case "$*" in *lazy-lock.json*) echo '{"stub":"lock"}' ;; esac
+    ;;
   build\ *)
     [ "${STUB_BUILD_FAIL:-0}" -eq 0 ] || exit 1
-    while [ "$1" != -t ]; do shift; done
+    while [ "$1" != -t ]; do
+      case "$1" in id=lazy-lock,src=*) cp "${1#id=lazy-lock,src=}" "$STUB_STATE.lock" ;; esac
+      shift
+    done
     untag "$2"
     echo "$2 built-$(wc -l <"$STUB_LOG" | tr -d ' ')" >>"$STUB_STATE"
     ;;
@@ -60,6 +70,10 @@ EOF
 chmod +x "$bin/docker" "$bin/sbx"
 
 cp "$repo/build.sh" "$repo/VERSION" "$work/"
+for layer in tools zsh git worktrunk yazi claude nvim; do
+  mkdir -p "$work/layers/$layer"
+  : >"$work/layers/$layer/install.sh"
+done
 git -C "$work" init -q
 git -C "$work" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m test
 version=$(cat "$repo/VERSION")
@@ -71,6 +85,7 @@ previous=sbx-stack-base:previous
 # images <ref id>...: the images that exist before the next run.
 images() {
   : >"$state"
+  : >"$state.lock"
   while [ $# -gt 0 ]; do
     echo "$1 $2" >>"$state"
     shift 2
@@ -114,11 +129,22 @@ is() { [ "$(image_of "$1")" = "$2" ]; }
 same() { [ -n "$(image_of "$1")" ] && [ "$(image_of "$1")" = "$(image_of "$2")" ]; }
 absent() { [ -z "$(image_of "$1")" ]; }
 is_new() { case "$(image_of "$1")" in built-*) return 0 ;; *) return 1 ;; esac }
+lock_is() { [ "$(cat "$state.lock")" = "$1" ]; }
 
 images "$tag" old "$good" old "$previous" older
-build SBX_STACK_CHECK=true --
+build SBX_STACK_CHECK=true STUB_LABEL=T0 --
 expect "check passes: exit 0" exit_is 0
-expect "check passes: the build pulls the base" called "docker build --pull"
+expect "no update: the build does not pull the base" not_called "--pull"
+for name in TOOLS ZSH GIT WORKTRUNK YAZI CLAUDE NVIM; do
+  expect "no update: the layer $name gets the refresh value of the good image" called "--build-arg REFRESH_$name=T0 "
+done
+expect "no update: the image records the refresh value of a layer" called "--label sbx-stack.refresh.nvim=T0 "
+expect "no update: the build gets the plugin lock of the good image" lock_is '{"stub":"lock"}'
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true --
+expect "no update, a good image with no refresh labels: every layer is refreshed" not_called "REFRESH_NVIM= "
+expect "no update, a good image with no refresh labels: the plugin lock is empty" lock_is '{}'
 expect "check passes: one template load" times 1 "sbx template load"
 expect "check passes: the tag names the new image" is_new "$tag"
 expect "check passes: the new image is the good one" same "$good" "$tag"
@@ -131,6 +157,41 @@ expect "check passes, no good image before: exit 0" exit_is 0
 expect "check passes, no good image before: warns before the build" said "cannot restore"
 expect "check passes, no good image before: the new image is the good one" same "$good" "$tag"
 expect "check passes, no good image before: no previous image" absent "$previous"
+expect "no update, no good image: the plugin lock is empty" lock_is '{}'
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --update
+expect "update: exit 0" exit_is 0
+expect "update: the build pulls the base" called "docker build --pull"
+expect "update: no layer keeps the refresh value of the good image" not_called "=T0 "
+for name in TOOLS ZSH GIT WORKTRUNK YAZI CLAUDE NVIM; do
+  expect "update: the layer $name is refreshed" called "--build-arg REFRESH_$name=2"
+done
+expect "update: the plugin lock is empty" lock_is '{}'
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --update nvim yazi
+expect "update nvim yazi: exit 0" exit_is 0
+expect "update nvim yazi: the build does not pull the base" not_called "--pull"
+expect "update nvim yazi: nvim is refreshed" called "--build-arg REFRESH_NVIM=2"
+expect "update nvim yazi: yazi is refreshed" called "--build-arg REFRESH_YAZI=2"
+expect "update nvim yazi: the image records the new value" called "--label sbx-stack.refresh.yazi=2"
+expect "update nvim yazi: tools keeps its value" called "--build-arg REFRESH_TOOLS=T0 "
+expect "update nvim yazi: claude keeps its value" called "--build-arg REFRESH_CLAUDE=T0 "
+expect "update nvim yazi: the plugin lock is empty" lock_is '{}'
+
+images "$tag" old "$good" old
+build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --update yazi
+expect "update yazi: nvim keeps its value" called "--build-arg REFRESH_NVIM=T0 "
+expect "update yazi: the build gets the plugin lock of the good image" lock_is '{"stub":"lock"}'
+
+for bad in "--update nope" "--update ../tools" "--update ." "--rollback now" "--update nvim --rollback"; do
+  # shellcheck disable=SC2086
+  build -- $bad
+  expect "build.sh $bad: exit 2" exit_is 2
+  expect "build.sh $bad: usage" said "usage: build.sh [--update [layer...] | --rollback]"
+  expect "build.sh $bad: no build" not_called "docker build"
+done
 
 images "$tag" old "$good" old "$previous" older
 for run in first second; do
@@ -187,7 +248,7 @@ expect "rollback, no previous image: the tag is unchanged" is "$tag" bad
 
 build -- --force
 expect "an unknown argument: exit 2" exit_is 2
-expect "an unknown argument: usage" said "usage: build.sh [--rollback]"
+expect "an unknown argument: usage" said "usage: build.sh [--update [layer...] | --rollback]"
 
 [ "$fails" -eq 0 ] || {
   echo "$fails failed"

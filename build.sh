@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Builds sbx-stack-base:<VERSION> with the newest version of everything, loads it into sbx as a template and runs
-# tests/check.sh on it. When the check fails, the last image that passed the check comes back.
-# build.sh --rollback loads the image that passed the check before the last one.
+# Builds sbx-stack-base:<VERSION>, loads it into sbx as a template and runs tests/check.sh on it. When the check
+# fails, the last image that passed the check comes back.
+#   build.sh                    updates nothing: only the layers whose files changed build again
+#   build.sh --update           takes the newest version of everything, the Claude kit image included
+#   build.sh --update <layer>…  takes the newest versions for the named layers (the folders in layers/)
+#   build.sh --rollback         loads the image that passed the check before the last one
 #
 # Three docker tags hold the state:
 #   sbx-stack-base:<VERSION>  the image that is loaded into sbx
@@ -10,14 +13,46 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+usage() {
+  echo "usage: build.sh [--update [layer...] | --rollback]" >&2
+  echo "layers: $(all_layers | tr '\n' ' ')" >&2
+  exit 2
+}
+
+all_layers() {
+  local script
+  for script in layers/*/install.sh; do
+    basename "$(dirname "$script")"
+  done
+}
+
+# updates <layer>: true when this build takes the newest versions for the layer.
+updates() {
+  case " $update " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
 rollback=0
+pull=0
+update=""
 case "${1:-}" in
   "") ;;
-  --rollback) rollback=1 ;;
-  *)
-    echo "usage: build.sh [--rollback]" >&2
-    exit 2
+  --rollback)
+    [ $# -eq 1 ] || usage
+    rollback=1
     ;;
+  --update)
+    shift
+    if [ $# -eq 0 ]; then
+      pull=1
+      update=$(all_layers | tr '\n' ' ')
+    fi
+    for layer in "$@"; do
+      case "$layer" in */* | .* | -* | "") usage ;; esac
+      [ -f "layers/$layer/install.sh" ] || usage
+      update="$update $layer"
+    done
+    ;;
+  *) usage ;;
 esac
 
 version=$(cat VERSION)
@@ -65,9 +100,34 @@ else
   echo "docker has no $good image: if the check of this build fails, build.sh cannot restore an earlier image" >&2
 fi
 
+# Each layer has a refresh value, the time of its last update. The image records the values as labels. A layer
+# that keeps the value of the good image comes from the build cache as the good image has it. A new value runs the
+# layer again, so the layer takes its newest versions; the layers after it in the Dockerfile run again too.
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+lock=$tmp/lazy-lock.json
+options=(--platform linux/arm64 --secret "id=lazy-lock,src=$lock")
+[ "$pull" -eq 0 ] || options=(--pull "${options[@]}")
+nvim_refresh=$now
+for layer in $(all_layers); do
+  refresh=""
+  if [ "$had_good" -eq 1 ] && ! updates "$layer"; then
+    refresh=$(docker image inspect "$good" --format "{{index .Config.Labels \"sbx-stack.refresh.$layer\"}}")
+  fi
+  [ -n "$refresh" ] || refresh=$now
+  [ "$layer" != nvim ] || nvim_refresh=$refresh
+  options+=(--build-arg "REFRESH_$(echo "$layer" | tr 'a-z-' 'A-Z_')=$refresh")
+  options+=(--label "sbx-stack.refresh.$layer=$refresh")
+done
+
+# The plugin lock of Neovim: a build that does not update nvim gets the lock of the good image, so each plugin keeps
+# its commit and only a new plugin takes its newest one. An empty lock gives every plugin its newest commit.
+echo '{}' >"$lock"
+if [ "$nvim_refresh" != "$now" ]; then
+  docker run --rm --entrypoint cat "$good" /home/agent/.config/nvim/lazy-lock.json >"$lock"
+fi
+
 revision=$(git rev-parse HEAD)
-if ! docker build --pull --platform linux/arm64 \
-  --build-arg REFRESH="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+if ! docker build "${options[@]}" \
   --build-arg GIT_USER_NAME="$(git config --global --get user.name || true)" \
   --build-arg GIT_USER_EMAIL="$(git config --global --get user.email || true)" \
   --build-arg VERSION="$version" \

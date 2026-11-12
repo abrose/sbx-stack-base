@@ -10,13 +10,16 @@ The designs are `docs/specs/2026-11-10-sbx-stack-base-image-design.md` (what the
 ## Build, update, roll back
 
 ```bash
-bash build.sh              # builds with the newest version of everything, loads the template, runs the check
-bash build.sh --rollback   # loads the last good image again
+bash build.sh                     # updates nothing: only the layers whose files changed build again
+bash build.sh --update            # takes the newest version of everything, the Claude kit image included
+bash build.sh --update nvim yazi  # takes the newest versions for the named layers only
+bash build.sh --rollback          # loads the image that was good before the last one
 ```
 
-An update is the same command as the first build. Nothing in the repo holds a version, so there is no file to edit.
+Nothing in the repo holds a version, so there is no file to edit for an update. The first build on a Mac takes the
+newest version of everything, with or without `--update`.
 
-1. `build.sh` builds the image. It pulls the newest Claude kit image and runs every layer again.
+1. `build.sh` builds the image. A layer builds again when one of its files changed or when `--update` names it.
 2. It loads the image into sbx as `sbx-stack-base:<VERSION>`.
 3. It runs `tests/check.sh` on the new template.
 4. If the check passes, the new image becomes `sbx-stack-base:good`, and the image that was `good` becomes
@@ -38,17 +41,49 @@ What to know about the three tags (`<VERSION>`, `good`, `previous`):
 A project template (`sbx-task template <project>` in `sbx-kit-builder`) holds the base it was saved from. After an
 update, run `sbx-task template <project>` again for each project with a template. `sbx-task new` warns until then.
 
-| Number (2026-11-11, Apple silicon) | Value |
+| Number (2026-11-12, Apple silicon) | Value |
 |---|---|
 | Image size | 3700 MB; the Claude kit image alone is 3054 MB |
-| `build.sh`, all of it | 131 s: about 115 s for the build and the load, the rest for the check |
+| `build.sh`, nothing changed | 34 s: every step comes from the cache; the load and the check still run |
+| `build.sh` after a new Neovim plugin | 113 s |
+| `build.sh --update nvim` | 121 s |
+| `build.sh --update` | 124 s |
 | Create of `check-base` from the template | 7-9 s |
 
-Every build is a full build: no step comes from the build cache.
+### What a build keeps and what it updates
+
+A layer that does not build again comes from Docker's build cache, exactly as it was. A layer that builds again
+takes the newest version of everything in it.
+
+Each layer has a refresh value: the time of its last update. The image records the values as labels, and
+`build.sh` passes the values of `sbx-stack-base:good` again for every layer that `--update` does not name:
+
+```bash
+docker image inspect sbx-stack-base:good --format '{{json .Config.Labels}}' | jq 'with_entries(select(.key | startswith("sbx-stack.refresh")))'
+```
+
+Three things follow:
+
+- **A layer that builds again also builds the layers after it again.** The order is tools, zsh, git, worktrunk,
+  yazi, claude, nvim. For example, an edit in `layers/yazi/` or `--update yazi` also updates the `claude` layer.
+  The `nvim` layer is last and builds in its own stage, so a change there touches no other layer.
+- **The cache is Docker's.** After `docker builder prune`, every layer builds again with its newest versions.
+- **Only `--update` with no layer name pulls the Claude kit image.** A new kit image builds every layer again.
+
+The `nvim` layer keeps more than the others, because it builds in two steps:
+
+- **Tools** (`build-tools.sh`): Neovim, the tree-sitter CLI and Rust. They change only with `--update` or
+  `--update nvim`.
+- **Plugins** (`build.sh`): the config, the plugins, the parsers and the matcher. This step runs again when a file
+  in `layers/nvim/` changed. Each plugin then keeps its commit, and only a new plugin takes its newest commit:
+  `build.sh` reads the plugin lock (`lazy-lock.json`) out of the image `sbx-stack-base:good` and hands it to the
+  step. The lock is never in the repo. `--update nvim` hands in an empty lock, so every plugin takes its newest
+  commit. lazy.nvim itself is the exception: it follows its release branch `stable`, not the lock.
 
 ## Source of truth
 
-This repo holds every file of the image and no version. Each build takes the newest version of each part. The
+This repo holds every file of the image and no version. A layer takes the newest version of each part when it
+builds. The
 image itself records what it got, in `/usr/local/share/sbx-stack/versions.txt`, one line per part: the layer, the
 name, and the version or commit. `build.sh` prints the file after each update.
 
@@ -101,9 +136,13 @@ The contract of a layer:
 
 - `install.sh` runs as root in the final image and installs the layer. The folder `layers/` is readable at `/layers`
   while it runs, and is not in the image afterwards.
-- `build.sh` is optional. It runs in a build-only stage and writes its result to `/out`. The layer's `install.sh`
-  finds that `/out` and copies it into the image. Only `nvim` has one: Rust and the tree-sitter CLI must not ship.
-- A layer reads only its own folder and `layers/lib.sh`. The order of the layers is their order in the Dockerfile.
+- Build scripts are optional. They run in a build-only stage and write their result to `/out`. The layer's
+  `install.sh` finds that `/out` and copies it into the image. Only `nvim` has them (`build-tools.sh`, then
+  `build.sh`): Rust and the tree-sitter CLI must not ship.
+- A layer reads only its own folder and `layers/lib.sh`: its `RUN` line mounts nothing else. The order of the
+  layers is their order in the Dockerfile.
+- Each layer has a build argument `REFRESH_<LAYER>` just before its `RUN` line. `build.sh --update` gives it a new
+  value, and the layer builds again.
 
 `layers/lib.sh` has four helpers: `fetch_latest` (an asset of the newest GitHub release), `clone_head` (the newest
 commit of a repo), `record` (a line in `versions.txt`) and `as_agent` (a command as the user `agent`).
@@ -114,10 +153,14 @@ when a plugin, a parser or the matcher is missing. Keep Neovim at 0.12 or newer:
 ### Add a layer
 
 1. Make `layers/<name>/install.sh`, executable, with `set -euo pipefail`. Put the layer's config files beside it.
-2. Add one line to the Dockerfile, at the place in the order where the layer belongs:
+2. Add the layer to the Dockerfile, at the place in the order where it belongs. `build.sh --update <name>` finds
+   the layer by its folder and passes `REFRESH_<NAME>` (upper case, `-` becomes `_`):
 
    ```dockerfile
-   RUN --mount=type=bind,source=layers,target=/layers /layers/<name>/install.sh
+   ARG REFRESH_<NAME>
+   RUN --mount=type=bind,source=layers/lib.sh,target=/layers/lib.sh \
+       --mount=type=bind,source=layers/<name>,target=/layers/<name> \
+       /layers/<name>/install.sh
    ```
 
 3. Record what the layer installs with `record <name> <tool> <version>`.
@@ -150,7 +193,7 @@ stop and start.
 | `build.sh` | docker build, docker image save, sbx template load, the check, the rollback |
 | `VERSION` | the image version; it changes only when the layout of the image changes |
 | `layers/lib.sh` | the helpers of the layer scripts |
-| `layers/<name>/` | one layer: `install.sh`, an optional `build.sh`, and its files |
+| `layers/<name>/` | one layer: `install.sh`, optional build scripts, and its files |
 | `tests/seed.sh` | static checks of the files |
 | `tests/build.sh` | unit tests of `build.sh` |
 | `tests/check.sh`, `tests/sbxenv.yaml` | the check in a sandbox from the template, and its project file |

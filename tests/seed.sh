@@ -51,7 +51,19 @@ lib_functions() {
 }
 
 nvim_layer_in_dockerfile() {
-  grep -q '/layers/nvim/build.sh' Dockerfile && grep -q '/layers/nvim/install.sh' Dockerfile
+  grep -q '/layers/nvim/build-tools.sh$' Dockerfile && grep -q '/layers/nvim/build.sh$' Dockerfile &&
+    grep -q '/layers/nvim/install.sh$' Dockerfile
+}
+
+# Each layer folder has its own ARG REFRESH_<LAYER> and a bind mount of only its own folder.
+each_layer_has_its_cache_key() {
+  local script layer arg
+  for script in layers/*/install.sh; do
+    layer=$(basename "$(dirname "$script")")
+    arg=REFRESH_$(echo "$layer" | tr 'a-z-' 'A-Z_')
+    grep -q "^ARG $arg\$" Dockerfile || return 1
+    grep -q "source=layers/$layer,target=/layers/$layer" Dockerfile || return 1
+  done
 }
 
 curl_fails_on_error() {
@@ -81,11 +93,18 @@ check "nvim: lazyvim.json exists" test -f $nvim/lazyvim.json
 check "no lazy-lock.json in the repo" no_file_named lazy-lock.json
 check "the Dockerfile holds no version number, no sha256 and no heredoc" \
   no_match '[0-9]+\.[0-9]+\.[0-9]+|sha256|<<' <(grep -v '^# syntax=' Dockerfile)
-check "the nvim layer has an executable build.sh, install.sh and run-lua" \
-  executable layers/nvim/build.sh layers/nvim/install.sh layers/nvim/run-lua
+check "the nvim layer has an executable build-tools.sh, build.sh, install.sh and run-lua" \
+  executable layers/nvim/build-tools.sh layers/nvim/build.sh layers/nvim/install.sh layers/nvim/run-lua
+check "each layer has its own REFRESH argument and mounts only its own folder" each_layer_has_its_cache_key
+check "no RUN line mounts all of layers/ and no REFRESH argument is shared" \
+  no_match 'source=layers,|^ARG REFRESH$' Dockerfile
+check "the nvim plugins step gets the plugin lock as a secret mount" \
+  grep -q 'type=secret,id=lazy-lock,target=/run/lazy-lock.json' Dockerfile
+check "the nvim plugins step puts the plugin lock into the config" \
+  grep -q 'install .* /run/lazy-lock.json .*/.config/nvim/lazy-lock.json' layers/nvim/build.sh
 check "the nvim layer has verify.lua and install-parsers.lua" \
   test -f layers/nvim/verify.lua -a -f layers/nvim/install-parsers.lua
-check "the Dockerfile runs the nvim layer's build.sh and install.sh" nvim_layer_in_dockerfile
+check "the Dockerfile runs the nvim layer's build-tools.sh, build.sh and install.sh" nvim_layer_in_dockerfile
 check "the nvim build runs verify.lua through run-lua" grep -q 'run-lua /layers/nvim/verify.lua' layers/nvim/build.sh
 check "nvim: no language, dap, test, prettier or eslint extras except lang.git" \
   no_match '"lazyvim\.plugins\.extras\.(lang\.[a-z.]+|dap\.core|test\.core|formatting\.prettier|linting\.eslint)"' \
