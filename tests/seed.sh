@@ -87,6 +87,8 @@ check "managed settings: an object with 4 enabled plugins" \
   layers/claude/managed-settings.json
 check "managed settings: the default model is Opus 5.5 with high effort" \
   jq -e '.model == "claude-opus-5-5" and .effortLevel == "high"' layers/claude/managed-settings.json
+check "managed settings: transcripts stay for 3650 days" \
+  jq -e '.cleanupPeriodDays == 3650' layers/claude/managed-settings.json
 check "nvim: the dropped plugin files are gone" \
   absent "${dropped_files[@]/#/$nvim/lua/plugins/}"
 check "nvim: the kept plugin files are there" \

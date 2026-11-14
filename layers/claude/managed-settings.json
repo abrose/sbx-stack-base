@@ -1,6 +1,7 @@
 {
   "model": "claude-opus-5-5",
   "effortLevel": "high",
+  "cleanupPeriodDays": 3650,
   "outputStyle": "adhd-friendly-simple-technical-english:ADHD-friendly Simple Technical English",
   "tui": "fullscreen",
   "statusLine": {
