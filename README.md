@@ -27,7 +27,7 @@ it got. The setup in `layers/` is the owner's taste. To make it yours, fork the 
 |---|---|
 | A Mac with Apple silicon | the image is `linux/arm64`, and the layers download arm64 release files |
 | Docker Desktop with BuildKit | `docker build` with bind, cache and secret mounts |
-| `sbx` v0.53.0 or newer, signed in | `sbx template load`, `sbx env`; the check creates a real sandbox |
+| `sbx` v0.53.0 (the tested version), signed in | `sbx template load`, `sbx env`; the check creates a real sandbox |
 | bash, git, jq, curl | `build.sh` and the tests; the Mac's bash 3.2 is enough |
 | Network access at build time | the Claude kit image and its tag list on Docker Hub, apt, GitHub releases and clones, rustup |
 
