@@ -430,6 +430,9 @@ fresh
 build SBX_STACK_CHECK=true -- --bump none
 expect "bump none: the version stays" version_is 0.2.0
 expect "bump none: the build gets the version of today" called "--build-arg VERSION=0.2.0 "
+# docker adds a record of the build, with its times, to each image, and the image id covers the record. With the record,
+# a build with no change gives a new id, and then the image to roll back to is lost.
+expect "bump none: the build adds no record of the build to the image" called " --provenance=false "
 fresh
 build SBX_STACK_CHECK=true --
 expect "no flag, no terminal: the version stays" version_is 0.2.0

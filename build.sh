@@ -371,7 +371,10 @@ fi
 # does not name a commit that does not hold these files.
 revision=$(git rev-parse HEAD)
 [ -z "$(git status --porcelain)" ] || revision=$revision+changes
+# No provenance record: docker would add a record of the build, with its times, to the image, and the image id covers
+# the record. Then a build with no change gives a new id, previous moves, and the image to roll back to is lost.
 if ! docker build "${options[@]}" \
+  --provenance=false \
   --build-arg GIT_USER_NAME="$(git config --global --get user.name || true)" \
   --build-arg GIT_USER_EMAIL="$(git config --global --get user.email || true)" \
   --build-arg VERSION="$version" \

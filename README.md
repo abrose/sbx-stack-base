@@ -180,7 +180,9 @@ What to know about the tags (`<major version>`, `<version>`, `good`, `previous`)
 - If `build.sh` stops after the passed check, it says so and `VERSION` stays as it was. Run the same command
   again: it gives the same version, and it removes a version tag that the stopped run left.
 - A build that gives the `good` image again (nothing changed) leaves `previous` as it is, so the image to roll back
-  to stays.
+  to stays. For this, `build.sh` builds with `--provenance=false`: the record of the build that docker adds holds
+  the times of the build, so each build would give a new image id. A new commit of the repo gives a new image: the
+  image records the commit.
 - The tags live in docker. `docker image prune -a` and `docker system prune -a` remove them, and the loaded sbx
   template stays. So `build.sh` keeps a copy of the `good` image outside docker, in the file
   `~/.local/state/sbx-stack-base/good.tar` (below `XDG_STATE_HOME` when it is set). The file has about 1 GB, and
