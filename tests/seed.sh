@@ -43,6 +43,14 @@ count() {
   [ "$(grep -c "$2" "$3")" -eq "$1" ]
 }
 
+# tests/check.sh has its own list of plugins: each plugin of plugins.txt must be in the file.
+plugins_in_check() {
+  local word plugin
+  while read -r word plugin; do
+    [ "$word" != plugin ] || grep -qF "$plugin" tests/check.sh || return 1
+  done <layers/claude/plugins.txt
+}
+
 lib_functions() {
   local f
   for f in fetch_latest latest_version fetch_release clone_head record as_agent; do
@@ -78,12 +86,17 @@ check "each layer has an executable install.sh" \
   layers/worktrunk/install.sh layers/lazygit/install.sh layers/lazydocker/install.sh layers/claude/install.sh
 check "lib.sh defines fetch_latest, latest_version, fetch_release, clone_head, record and as_agent" lib_functions
 check "plugins.txt names 2 marketplaces" count 2 '^marketplace ' layers/claude/plugins.txt
-check "plugins.txt names 4 plugins" count 4 '^plugin ' layers/claude/plugins.txt
+check "plugins.txt names 5 plugins" count 5 '^plugin ' layers/claude/plugins.txt
+check "tests/check.sh asserts each plugin of plugins.txt" plugins_in_check
+check "VERSION is x.y.z" grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' VERSION
+check "the README names the major tag in the project file" grep -q 'template: sbx-stack-base:0$' README.md
+check "no project file line and no command of the README names a full version" \
+  no_match '(template:|cat) sbx-stack-base:[0-9]+\.' README.md
 check "every curl in layers/ fails on an HTTP error" curl_fails_on_error
 check "the old folders are gone" absent files nvim-build apt-packages.txt
 check "the Dockerfile holds no commit ARG and no clone function" no_match '_COMMIT|clone\(\)' Dockerfile
-check "managed settings: an object with 4 enabled plugins" \
-  jq -e 'type == "object" and (.enabledPlugins | length) == 4 and all(.enabledPlugins[]; . == true)' \
+check "managed settings: an object with 5 enabled plugins" \
+  jq -e 'type == "object" and (.enabledPlugins | length) == 5 and all(.enabledPlugins[]; . == true)' \
   layers/claude/managed-settings.json
 check "managed settings: the default model is Opus 5.5 with high effort" \
   jq -e '.model == "claude-opus-5-5" and .effortLevel == "high"' layers/claude/managed-settings.json

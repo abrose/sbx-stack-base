@@ -15,7 +15,7 @@ managed=/etc/claude-code/managed-settings.json
 hooks="block-secret-exposure.mjs block-complex-bash.mjs block-agent-attribution.mjs block-protected-force-push.mjs
 block-inline-interpreter.mjs warn-if-no-gitleaks.sh"
 plugins="adhd-friendly-simple-technical-english@abrose-plugins quota-statusline@abrose-plugins
-hookify@claude-plugins-official superpowers@claude-plugins-official"
+chebu-ui@abrose-plugins hookify@claude-plugins-official superpowers@claude-plugins-official"
 tools="zsh eza zoxide starship btop fzf rg fd bat shfmt gitleaks file yazi ya wt lazygit lazydocker"
 recorded="claude-code zsh oh-my-zsh fast-syntax-highlighting fzf-tab yazi wt lazygit lazydocker nvim tree-sitter rust LazyVim lazy.nvim"
 email=$(git config --global --get user.email || true)

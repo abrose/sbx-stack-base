@@ -14,8 +14,8 @@ that also holds a full terminal setup, so each new sandbox has it from the first
 - yazi, lazygit, lazydocker, worktrunk, git aliases
 - Claude Code settings, a statusline, safety hooks and plugins
 
-`build.sh` builds the image, loads it into sbx as the template `sbx-stack-base:<VERSION>`, and checks it in a real
-sandbox. A project then names the template in its `sbxenv.yaml`. The tools and languages of one project (node,
+`build.sh` builds the image, loads it into sbx as the template `sbx-stack-base:0` (the major version of the image),
+and checks it in a real sandbox. A project then names the template in its `sbxenv.yaml`. The tools and languages of one project (node,
 dotnet, ...) do not belong here: they stay sbx kits in the project file.
 
 The repo pins no version. A layer takes the newest version of its tools when it builds, and the image records what
@@ -60,11 +60,12 @@ in a sandbox carry your identity. It copies nothing else from the Mac.
      - docker.io/docker/sbx-kit-claude:latest
    workspace: .
    sandboxOptions:
-     template: sbx-stack-base:0.2.0
+     template: sbx-stack-base:0
      pullPolicy: never
    ```
 
-   - `template` is the image of this repo. The tag is the content of the file `VERSION`.
+   - `template` is the image of this repo. The tag is the major version of the image, the first number in the file
+     `VERSION`. The tag moves to each new image, so this line stays as it is when the version rises.
    - `pullPolicy: never` tells sbx to use the loaded template and not to look for it in a registry.
    - `workspace: .` mounts the project folder into the sandbox, at the same path as on the Mac.
    - The Claude kit stays in `kits`: it tells sbx how to run the agent. The base image decides which Claude Code
@@ -117,23 +118,61 @@ bash build.sh                     # updates nothing: only the layers whose files
 bash build.sh --update            # takes the newest version of everything, the Claude kit image included
 bash build.sh --update nvim yazi  # takes the newest versions for the named layers only
 bash build.sh --rollback          # loads the image that was good before the last one
+bash build.sh --bump minor        # as build.sh, and raises the version; goes before --update
 ```
 
-Nothing in the repo holds a version, so there is no file to edit for an update. The first build on a Mac takes the
-newest version of everything, with or without `--update`.
+Nothing in the repo holds the version of a tool, so there is no file to edit for an update. The first build on a
+Mac takes the newest version of everything, with or without `--update`.
 
-1. `build.sh` builds the image. A layer builds again when one of its files changed or when `--update` names it.
-2. It loads the image into sbx as `sbx-stack-base:<VERSION>`.
-3. It runs `tests/check.sh` on the new template.
-4. If the check passes, the new image becomes `sbx-stack-base:good`, and the image that was `good` becomes
-   `sbx-stack-base:previous`. `build.sh` prints the image size and what the image holds.
-5. If the check fails, it loads `sbx-stack-base:good` again and exits 1. If the build fails, it loads nothing.
+1. `build.sh` gets the level of the version bump: from `--bump`, or from your answer when it runs in a terminal.
+2. It builds the image. A layer builds again when one of its files changed or when `--update` names it.
+3. It loads the image into sbx as `sbx-stack-base:<major version>`, the tag that project files name.
+4. It runs `tests/check.sh` on the new template.
+5. If the check passes, it writes the new version to `VERSION` and loads the image as `sbx-stack-base:<version>`
+   too. The new image becomes `sbx-stack-base:good`, and the image that was `good` becomes
+   `sbx-stack-base:previous`. `build.sh` prints the version, the image size and what the image holds.
+6. If the check fails, it loads `sbx-stack-base:good` again and exits 1. If the build fails, it loads nothing. In
+   both cases `VERSION` stays as it was.
 
 `build.sh --rollback` is for a bad image that the check did not catch. It loads `sbx-stack-base:previous`, the image
-that was good before the last one. Only a passed check or a rollback moves `good`, so only an image that passed can
-become `previous`.
+that was good before the last one, under its two tags, and writes its version to `VERSION`. Only a passed check or
+a rollback moves `good`, so only an image that passed can become `previous`.
 
-What to know about the three tags (`<VERSION>`, `good`, `previous`):
+### The version
+
+The image has a version `x.y.z` in the file `VERSION`. One image has two tags in sbx:
+
+| Tag | Use |
+|---|---|
+| `sbx-stack-base:<major version>`, now `sbx-stack-base:0` | project files and kit tests name this tag; it moves to each new image |
+| `sbx-stack-base:<version>`, for example `sbx-stack-base:0.3.0` | shows the version in `sbx template ls`; one such tag exists at a time |
+
+So a new minor or patch version changes no project file. `build.sh` raises the version by one level:
+
+| Level | When | Example |
+|---|---|---|
+| `major` | a kit or a project file must change: a path, the user, the layout | `0.2.0` to `1.0.0` |
+| `minor` | a new part: a tool, a plugin, a layer, a setting | `0.2.0` to `0.3.0` |
+| `patch` | the same parts in newer versions (`--update`), or a fix | `0.2.0` to `0.2.1` |
+| `none` | the version stays | |
+
+- With `--bump <level>`, `build.sh` asks nothing.
+- With no `--bump` in a terminal, `build.sh` asks for the level before the build. Enter means `none`.
+- With no `--bump` and no terminal (a script, an agent), the level is `none`.
+
+For a clean record, commit your change, build, and then commit `VERSION`. The image records the commit of the repo
+(`/usr/local/share/sbx-stack/VERSION` holds `<version> <commit>`). A build from files that are not committed
+records `<commit>+changes`.
+
+After a `major` bump, the old major tag stays loaded with the old image, and a file that still names it gets that
+old image. Change the files, then remove the old tag:
+
+```bash
+sbx template rm sbx-stack-base:0
+docker image rm sbx-stack-base:0
+```
+
+What to know about the tags (`<major version>`, `<version>`, `good`, `previous`):
 
 - The new template is loaded while its check runs. If you stop `build.sh` during the check, the unchecked template
   stays loaded. Run `build.sh` again: `good` did not move.
@@ -199,7 +238,7 @@ image itself records what it got, in `/usr/local/share/sbx-stack/versions.txt`, 
 name, and the version or commit. `build.sh` prints the file after each update.
 
 ```bash
-docker run --rm --entrypoint cat sbx-stack-base:0.2.0 /usr/local/share/sbx-stack/versions.txt
+docker run --rm --entrypoint cat sbx-stack-base:0 /usr/local/share/sbx-stack/versions.txt
 ```
 
 What follows from "no versions":
@@ -306,7 +345,7 @@ stop and start.
 |---|---|
 | `Dockerfile` | wires the layers together: one `RUN` per layer, no version, no logic |
 | `build.sh` | docker build, docker image save, sbx template load, the check, the rollback |
-| `VERSION` | the image version; it changes only when the layout of the image changes |
+| `VERSION` | the image version; `build.sh` raises it after a passed check, see "The version" |
 | `LICENSE` | the MIT license |
 | `layers/lib.sh` | the helpers of the layer scripts |
 | `layers/<name>/` | one layer: `install.sh`, optional build scripts, and its files |
