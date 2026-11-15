@@ -57,6 +57,7 @@
   "enabledPlugins": {
     "adhd-friendly-simple-technical-english@abrose-plugins": true,
     "quota-statusline@abrose-plugins": true,
+    "chebu-ui@abrose-plugins": true,
     "hookify@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true
   }
