@@ -56,10 +56,12 @@ case "$1 ${2:-}" in
     id=$(image_of "$ref")
     shift 3
     while [ $# -gt 1 ] && [ "$1" != -o ]; do shift; done
-    # STUB_SAVE_KILL is a tag: build.sh dies during the save of this tag, as with a kill or a loss of power.
+    # STUB_SAVE_KILL is a tag: build.sh gets a signal during the save of this tag, and the save goes on for a
+    # moment. STUB_KILL_SIGNAL is the signal: KILL (a kill, a loss of power) when it is not set.
     if [ "$ref" = "${STUB_SAVE_KILL:-}" ]; then
       [ "${1:-}" != -o ] || echo partial >"$2"
-      kill -KILL "$PPID"
+      kill "-${STUB_KILL_SIGNAL:-KILL}" "$PPID"
+      sleep 1
       exit 1
     fi
     if [ "$ref" = "${STUB_SAVE_FAIL:-}" ]; then
@@ -741,6 +743,58 @@ expect "a run that dies during the save: the old copy is gone" [ ! -e "$copy" ]
 build SBX_STACK_CHECK=true --
 expect "the next passed build: no part of a file stays" [ ! -e "$copy.new" ]
 expect "the next passed build: the copy holds the good image" copy_holds "$(image_of "$good")"
+
+# A stop by a signal during the save (Ctrl-C): the cleanup of build.sh removes the part of a file.
+images "$tag" old "$good" old
+a_copy old
+build SBX_STACK_CHECK=true "STUB_SAVE_KILL=$good" STUB_KILL_SIGNAL=TERM -- 2>/dev/null
+expect "a run that gets TERM during the save: it stopped" [ "$rc" -ne 0 ]
+expect "a run that gets TERM during the save: no part of a file stays" [ ! -e "$copy.new" ]
+expect "a run that gets TERM during the save: the old copy is gone" [ ! -e "$copy" ]
+# A part of a file that a killed run left goes at the start of the next run, also when that run does not pass.
+images "$tag" old "$good" old
+a_copy old
+echo partial >"$copy.new"
+build SBX_STACK_CHECK=false --
+expect "a part of a file from a killed run: the next run removes it" [ ! -e "$copy.new" ]
+expect "a part of a file from a killed run: the copy is unchanged" copy_holds old
+
+# A copy path that build.sh cannot read is not "no copy": with no good image, the build would take the newest
+# version of everything.
+images "$tag" old
+mkdir -p "$(dirname "$copy")"
+ln -s "$tmp/nowhere" "$copy"
+build SBX_STACK_CHECK=true --
+expect "the copy is a link to nothing: exit 1" exit_is 1
+expect "the copy is a link to nothing: says so" said "cannot read the copy"
+expect "the copy is a link to nothing: no build" not_called "docker build"
+images "$tag" old
+mkdir -p "$copy"
+build SBX_STACK_CHECK=true --
+rmdir "$copy"
+expect "the copy path is a folder: exit 1" exit_is 1
+expect "the copy path is a folder: says so" said "cannot read the copy"
+expect "the copy path is a folder: no build" not_called "docker build"
+# The user root reads each file and searches each folder, so these two cases need another user.
+if [ "$(id -u)" -ne 0 ]; then
+  images "$tag" old
+  a_copy kept
+  chmod 000 "$(dirname "$copy")"
+  build SBX_STACK_CHECK=true --
+  chmod 700 "$(dirname "$copy")"
+  expect "the folder of the copy cannot be searched: exit 1" exit_is 1
+  expect "the folder of the copy cannot be searched: says so" said "cannot read the copy"
+  expect "the folder of the copy cannot be searched: no build" not_called "docker build"
+  expect "the folder of the copy cannot be searched: the copy stays" copy_holds kept
+  images "$tag" old
+  a_copy kept
+  chmod 000 "$copy"
+  build SBX_STACK_CHECK=true --
+  chmod 600 "$copy"
+  expect "the copy cannot be read: exit 1" exit_is 1
+  expect "the copy cannot be read: says so" said "cannot read the copy"
+  expect "the copy cannot be read: no build" not_called "docker build"
+fi
 
 # A rollback needs the previous image. It does not read the copy.
 images "$tag" bad

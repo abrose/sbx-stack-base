@@ -66,6 +66,8 @@ With each move of the tag `good`: after a passed check, and at the end of `build
    the name `good.tar` never holds a part of a file.
 4. When the save fails (a full disk), `build.sh` removes `good.tar.new` and says that there is no copy now. The build
    still ends with success: the image passed the check and is loaded.
+5. At each end of a run, `build.sh` removes `good.tar.new`. So a run that a signal stops during the save leaves no
+   part of a file, and the next run removes the part that a kill or a loss of power left (review, 2026-11-15).
 
 `build.sh` saves after each passed build, also when the image did not change. So no second file must record which
 image the copy holds, and a copy that the owner deleted comes back with the next build.
@@ -82,7 +84,8 @@ the `previous` image, and it moves `good` itself.
 | The copy exists and loads | It says "restored the good image from `<path>`" and goes on. The build keeps the kit, the refresh values and the plugin lock |
 | docker does not answer | It stops before the build and says so. It does not name the copy as the cause |
 | The copy exists and does not load, or gives no `good` tag | It stops before the build, with the path. The owner removes a broken file to build with no good image |
-| No copy | As today: the warning, then a build that takes the newest version of everything |
+| The copy path cannot be read: a file with no read permission, a link to nothing, a folder, or a folder above it that cannot be searched | It stops before the build, with the path. It does not take such a path as "no copy" (review, 2026-11-15) |
+| No copy: nothing has the name, and the first folder above it that exists can be searched | As today: the warning, then a build that takes the newest version of everything |
 
 `build.sh` does not load the restored image into sbx: the sbx store still has its template.
 
@@ -107,6 +110,10 @@ In `tests/build.sh`, with the stubs of docker and sbx. Each assertion comes firs
 10. The path comes from `XDG_STATE_HOME`, or from `HOME`. No other variable changes it.
 11. A run that dies during the save leaves no copy, never the old one.
 12. docker does not answer: `build.sh` stops, says so, and does not name the copy.
+13. A run that gets a signal during the save leaves no `.new` file. A `.new` file from a killed run goes with the next
+    run, also when that run does not pass.
+14. A copy path that cannot be read (a link to nothing, a folder, a folder that cannot be searched, a file with no
+    read permission): `build.sh` stops, says so, and docker gets no build command.
 
 One real run on the Mac after the unit tests: remove the tag `good` (the tag only), run `bash build.sh`, and see the
 restore line and a build that comes from the cache.

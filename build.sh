@@ -157,6 +157,8 @@ finished=0
 passed_check=0
 cleanup() {
   rm -rf "$tmp"
+  # A run that stopped during the save left a part of a file. The copy itself never has this name.
+  rm -f "$copy.new" 2>/dev/null || true
   [ "$finished" -eq 0 ] || return 0
   # VERSION is the last thing that a build writes, so the same command gives the same version again.
   [ "$passed_check" -eq 0 ] ||
@@ -204,10 +206,24 @@ move_good() {
   fi
 }
 
+# no_copy: there is no copy, and that is sure: nothing has the name of the copy, and the first folder above it
+# that exists can be searched. A folder that cannot be searched hides whether the copy exists.
+no_copy() {
+  local dir
+  if [ -e "$copy" ] || [ -L "$copy" ]; then
+    return 1
+  fi
+  dir=$(dirname "$copy")
+  while [ ! -e "$dir" ] && [ ! -L "$dir" ]; do
+    dir=$(dirname "$dir")
+  done
+  [ -d "$dir" ] && [ -x "$dir" ]
+}
+
 # restore_good: when docker has no good image and the copy exists, loads the copy. A copy that does not give the
 # good image stops the build: with no good image, the build would take the newest version of everything.
 restore_good() {
-  if exists "$good" || [ ! -f "$copy" ]; then
+  if exists "$good" || no_copy; then
     return 0
   fi
   # "No good image" can also mean that docker is down. Then the copy is not the cause.
@@ -215,6 +231,12 @@ restore_good() {
     echo "docker does not answer: nothing is built. Start docker, then run build.sh again" >&2
     exit 1
   }
+  if [ ! -f "$copy" ] || [ ! -r "$copy" ]; then
+    echo "docker has no $good image, and build.sh cannot read the copy $copy: nothing is built." \
+      "The path is no file that build.sh can read, or a folder above it cannot be searched." \
+      "Repair the path, or remove the copy: with no copy, the next build takes the newest version of everything" >&2
+    exit 1
+  fi
   if docker image load -i "$copy" >/dev/null && exists "$good"; then
     echo "docker had no $good image: restored $good from $copy"
     return 0

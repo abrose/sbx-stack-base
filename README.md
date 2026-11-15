@@ -193,6 +193,11 @@ What to know about the tags (`<major version>`, `<version>`, `good`, `previous`)
     the newest version of everything.
   - A copy that does not load stops the build. If the file is broken, remove it. When docker does not answer,
     `build.sh` says so: the copy is not the cause then.
+  - A copy path that `build.sh` cannot read stops the build too: a file with no read permission, a link to
+    nothing, a folder, or a folder above the copy that cannot be searched. `build.sh` does not take such a path as
+    "no copy".
+  - A run that stops during the save leaves no part of a file: `build.sh` removes `good.tar.new` at each end of a
+    run.
   - `previous` has no copy: after a prune, `build.sh --rollback` has no image to roll back to.
   - Only this `build.sh` keeps the copy in step with the tag. After a move of `good` by hand (`docker tag`), remove
     the file: a copy that is older than the `good` image gives a later build older versions with no message.
