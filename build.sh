@@ -5,6 +5,8 @@
 #   build.sh --update           takes the newest version of everything, the Claude kit image included
 #   build.sh --update <layer>…  takes the newest versions for the named layers (the folders in layers/)
 #   build.sh --rollback         loads the image that passed the check before the last one
+#   build.sh --bump <level> …   raises the version in VERSION when the check passes: major, minor, patch or none.
+#                               With no --bump, build.sh asks for the level when stdin is a terminal.
 #
 # Three docker tags hold the state:
 #   sbx-stack-base:<VERSION>  the image that is loaded into sbx
@@ -14,9 +16,50 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 usage() {
-  echo "usage: build.sh [--update [layer...] | --rollback]" >&2
+  echo "usage: build.sh [--bump major|minor|patch|none] [--update [layer...]] | --rollback" >&2
   echo "layers: $(all_layers | tr '\n' ' ')" >&2
   exit 2
+}
+
+# bumped <version> <level>: prints the version after a bump of the level.
+bumped() {
+  local major minor patch
+  IFS=. read -r major minor patch <<EOF
+$1
+EOF
+  case "$2" in
+    major) echo "$((major + 1)).0.0" ;;
+    minor) echo "$major.$((minor + 1)).0" ;;
+    patch) echo "$major.$minor.$((patch + 1))" ;;
+    none) echo "$1" ;;
+  esac
+}
+
+# ask_level <version>: asks on the terminal which level this build bumps, and prints the level. Enter means none.
+# It fails when the input ends with no answer.
+ask_level() {
+  local answer
+  {
+    echo "the version is $1. Which level does this build bump?"
+    echo "  none   $1  (Enter)"
+    echo "  patch  $(bumped "$1" patch)  the same parts in newer versions, or a fix"
+    echo "  minor  $(bumped "$1" minor)  a new part: a tool, a plugin, a layer, a setting"
+    echo "  major  $(bumped "$1" major)  a kit or a project file must change"
+  } >&2
+  while true; do
+    printf 'level: ' >&2
+    read -r answer || {
+      printf '\nno answer: nothing is built\n' >&2
+      return 1
+    }
+    case "${answer:-none}" in
+      major | minor | patch | none)
+        echo "${answer:-none}"
+        return 0
+        ;;
+    esac
+    echo "the level is one of: none, patch, minor, major" >&2
+  done
 }
 
 all_layers() {
@@ -34,10 +77,19 @@ updates() {
 rollback=0
 pull=0
 update=""
+level=""
+if [ "${1:-}" = --bump ]; then
+  case "${2:-}" in
+    major | minor | patch | none) level=$2 ;;
+    *) usage ;;
+  esac
+  shift 2
+fi
 case "${1:-}" in
   "") ;;
   --rollback)
     [ $# -eq 1 ] || usage
+    [ -z "$level" ] || usage
     rollback=1
     ;;
   --update)
@@ -55,7 +107,25 @@ case "${1:-}" in
   *) usage ;;
 esac
 
-version=$(cat VERSION)
+# The version of this build: the level comes from --bump, or from an answer when stdin is a terminal. VERSION gets
+# the new version only after the check passes.
+old_version=$(cat VERSION 2>/dev/null || true)
+echo "$old_version" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || {
+  echo "VERSION must be x.y.z, and it is '$old_version'" >&2
+  exit 1
+}
+version=$old_version
+if [ "$rollback" -eq 0 ]; then
+  if [ -z "$level" ]; then
+    if [ -t 0 ]; then
+      level=$(ask_level "$old_version") || exit 1
+    else
+      level=none
+      echo "no --bump and no terminal: the version stays $old_version"
+    fi
+  fi
+  version=$(bumped "$old_version" "$level")
+fi
 tag=sbx-stack-base:$version
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
@@ -182,6 +252,7 @@ if ! "$check"; then
   exit 1
 fi
 
+echo "$version" >VERSION
 [ "$had_good" -eq 0 ] || docker tag "$good" "$previous"
 docker tag "$tag" "$good"
 docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "size of %s: %.0f MB\n", "'"$tag"'", $1 / 1e6}'

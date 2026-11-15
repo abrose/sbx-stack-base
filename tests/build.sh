@@ -83,14 +83,16 @@ echo '{"results":[{"name":"latest"},{"name":"2.1.99"},{"name":"2.1.316"},{"name"
 EOF
 chmod +x "$bin/docker" "$bin/sbx" "$bin/curl"
 
-cp "$repo/build.sh" "$repo/VERSION" "$work/"
+cp "$repo/build.sh" "$work/"
+# The tests have their own version, so they do not depend on the version of the repo.
+version=0.2.0
+echo "$version" >"$work/VERSION"
 for layer in tools zsh git worktrunk yazi lazygit lazydocker claude nvim; do
   mkdir -p "$work/layers/$layer"
   : >"$work/layers/$layer/install.sh"
 done
 git -C "$work" init -q
 git -C "$work" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m test
-version=$(cat "$repo/VERSION")
 tag=sbx-stack-base:$version
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
@@ -109,6 +111,7 @@ images() {
 image_of() { awk -v ref="$1" '$1 == ref {print $2}' "$state"; }
 
 # build <VAR=value>... -- <build.sh arguments>: runs build.sh with the stubs; sets rc, $calls and $out.
+# stdin is not a terminal, so build.sh asks nothing, also when a person runs these tests in a terminal.
 build() {
   local envs=("PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state")
   while [ "$1" != -- ]; do
@@ -119,7 +122,39 @@ build() {
   # A marker line, so "this run" starts after it and the image ids of the stub stay unique.
   echo "--- run" >>"$calls"
   rc=0
-  env "${envs[@]}" "$BASH" "$work/build.sh" "$@" >"$out" 2>&1 || rc=$?
+  env "${envs[@]}" "$BASH" "$work/build.sh" "$@" >"$out" 2>&1 </dev/null || rc=$?
+}
+
+# build_on_terminal <answer>... -- <build.sh arguments>: as build with a check that passes, but stdin is a terminal
+# (from script) that gets one line for each answer and then the end of the input.
+build_on_terminal() {
+  local answers=""
+  while [ "$1" != -- ]; do
+    answers="$answers$1"$'\n'
+    shift
+  done
+  shift
+  echo "--- run" >>"$calls"
+  rc=0
+  typed "$answers" |
+    env "PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" SBX_STACK_CHECK=true \
+      script -q /dev/null "$BASH" "$work/build.sh" "$@" >"$out" 2>&1 || rc=$?
+}
+
+# typed <text>: writes the text as a person does, with a wait before it and before the end of the input. When the
+# text and the end come at once, script gives the end of the input to the terminal first (probe on macOS, 2026-11-15).
+typed() {
+  sleep 1
+  printf '%s' "$1"
+  sleep 1
+}
+
+version_is() { [ "$(cat "$work/VERSION")" = "$1" ]; }
+set_version() { echo "$1" >"$work/VERSION"; }
+# fresh: the state before a version case: version 0.2.0, an image that is loaded and good.
+fresh() {
+  set_version "$version"
+  images "$tag" old "$good" old
 }
 
 expect() {
@@ -138,6 +173,7 @@ called() { this_run | grep -qF -- "$1"; }
 not_called() { ! this_run | grep -qF -- "$1"; }
 times() { [ "$(this_run | grep -cF -- "$2")" -eq "$1" ]; }
 said() { grep -qF -- "$1" "$out"; }
+not_said() { ! grep -qF -- "$1" "$out"; }
 exit_is() { [ "$rc" -eq "$1" ]; }
 is() { [ "$(image_of "$1")" = "$2" ]; }
 same() { [ -n "$(image_of "$1")" ] && [ "$(image_of "$1")" = "$(image_of "$2")" ]; }
@@ -232,11 +268,13 @@ for lock_state in fail broken; do
   expect "the plugin lock read is $lock_state: no build" not_called "docker build"
 done
 
-for bad in "--update nope" "--update ../tools" "--update ." "--rollback now" "--update nvim --rollback"; do
+usage="usage: build.sh [--bump major|minor|patch|none] [--update [layer...]] | --rollback"
+for bad in "--update nope" "--update ../tools" "--update ." "--rollback now" "--update nvim --rollback" \
+  "--bump" "--bump big" "--bump minor --rollback" "--rollback --bump minor" "--update nvim --bump minor"; do
   # shellcheck disable=SC2086
   build -- $bad
   expect "build.sh $bad: exit 2" exit_is 2
-  expect "build.sh $bad: usage" said "usage: build.sh [--update [layer...] | --rollback]"
+  expect "build.sh $bad: usage" said "$usage"
   expect "build.sh $bad: no build" not_called "docker build"
 done
 
@@ -295,7 +333,77 @@ expect "rollback, no previous image: the tag is unchanged" is "$tag" bad
 
 build -- --force
 expect "an unknown argument: exit 2" exit_is 2
-expect "an unknown argument: usage" said "usage: build.sh [--update [layer...] | --rollback]"
+expect "an unknown argument: usage" said "$usage"
+
+# The version: --bump or a prompt gives the level; VERSION changes only after a passed check.
+fresh
+build SBX_STACK_CHECK=true -- --bump patch
+expect "bump patch: 0.2.1" version_is 0.2.1
+fresh
+build SBX_STACK_CHECK=true -- --bump minor
+expect "bump minor: 0.3.0" version_is 0.3.0
+expect "bump minor: the build gets the new version" called "--build-arg VERSION=0.3.0 "
+fresh
+set_version 0.2.7
+build SBX_STACK_CHECK=true -- --bump minor
+expect "bump minor sets the patch level to 0" version_is 0.3.0
+fresh
+set_version 0.2.7
+build SBX_STACK_CHECK=true -- --bump major
+expect "bump major: 1.0.0" version_is 1.0.0
+fresh
+build SBX_STACK_CHECK=true -- --bump none
+expect "bump none: the version stays" version_is 0.2.0
+expect "bump none: the build gets the version of today" called "--build-arg VERSION=0.2.0 "
+fresh
+build SBX_STACK_CHECK=true --
+expect "no flag, no terminal: the version stays" version_is 0.2.0
+expect "no flag, no terminal: says so" said "the version stays 0.2.0"
+fresh
+build SBX_STACK_CHECK=true STUB_LABEL=T0 -- --bump minor --update nvim
+expect "bump with update: the version" version_is 0.3.0
+expect "bump with update: the layer is refreshed" called "--build-arg REFRESH_NVIM=2"
+expect "bump with update: another layer keeps its value" called "--build-arg REFRESH_TOOLS=T0 "
+fresh
+build SBX_STACK_CHECK=false -- --bump minor
+expect "bump, the check fails: exit 1" exit_is 1
+expect "bump, the check fails: the version stays" version_is 0.2.0
+fresh
+build SBX_STACK_CHECK=true STUB_BUILD_FAIL=1 -- --bump minor
+expect "bump, the build fails: the version stays" version_is 0.2.0
+
+fresh
+build_on_terminal minor --
+expect "terminal, the answer minor: exit 0" exit_is 0
+expect "terminal, the answer minor: 0.3.0" version_is 0.3.0
+expect "terminal: the prompt names the version of today" said "the version is 0.2.0"
+expect "terminal: the prompt names the level and its result" said "minor  0.3.0"
+fresh
+build_on_terminal "" --
+expect "terminal, Enter: the version stays" version_is 0.2.0
+expect "terminal, Enter: the build runs" called "docker build"
+fresh
+build_on_terminal bogus patch --
+expect "terminal, a wrong answer asks again" version_is 0.2.1
+fresh
+build_on_terminal minor -- --bump patch
+expect "terminal with --bump: the flag counts" version_is 0.2.1
+expect "terminal with --bump: no prompt" not_said "Which level"
+fresh
+build_on_terminal --
+expect "terminal, the input ends with no answer: exit 1" exit_is 1
+expect "terminal, the input ends with no answer: no build" not_called "docker build"
+expect "terminal, the input ends with no answer: the version stays" version_is 0.2.0
+
+for wrong in 0.2 v0.2.0 ""; do
+  fresh
+  echo "$wrong" >"$work/VERSION"
+  build SBX_STACK_CHECK=true -- --bump minor
+  expect "VERSION is '$wrong': exit 1" exit_is 1
+  expect "VERSION is '$wrong': says so" said "VERSION must be x.y.z"
+  expect "VERSION is '$wrong': no build" not_called "docker build"
+done
+set_version "$version"
 
 [ "$fails" -eq 0 ] || {
   echo "$fails failed"
