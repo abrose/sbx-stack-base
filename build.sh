@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds sbx-stack-base:<VERSION>, loads it into sbx as a template and runs tests/check.sh on it. When the check
+# Builds the image sbx-stack-base, loads it into sbx as a template and runs tests/check.sh on it. When the check
 # fails, the last image that passed the check comes back.
 #   build.sh                    updates nothing: only the layers whose files changed build again
 #   build.sh --update           takes the newest version of everything, the Claude kit image included
@@ -8,8 +8,9 @@
 #   build.sh --bump <level> …   raises the version in VERSION when the check passes: major, minor, patch or none.
 #                               With no --bump, build.sh asks for the level when stdin is a terminal.
 #
-# Three docker tags hold the state:
-#   sbx-stack-base:<VERSION>  the image that is loaded into sbx
+# Four docker tags hold the state:
+#   sbx-stack-base:<major>    the image that is loaded into sbx; project files name this tag
+#   sbx-stack-base:<version>  the same image after a passed check; it shows the version in the list of templates
 #   sbx-stack-base:good       the last image that passed the check; only a passed check or a rollback moves it
 #   sbx-stack-base:previous   the image that was good before that one
 set -euo pipefail
