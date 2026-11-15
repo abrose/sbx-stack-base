@@ -21,6 +21,11 @@ usage() {
   exit 2
 }
 
+# is_version <text>: true when the text is a version x.y.z, with no leading zero in a number.
+is_version() {
+  echo "$1" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+}
+
 # bumped <version> <level>: prints the version after a bump of the level.
 bumped() {
   local major minor patch
@@ -110,7 +115,7 @@ esac
 # The version of this build: the level comes from --bump, or from an answer when stdin is a terminal. VERSION gets
 # the new version only after the check passes.
 old_version=$(cat VERSION 2>/dev/null || true)
-echo "$old_version" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || {
+is_version "$old_version" || {
   echo "VERSION must be x.y.z, and it is '$old_version'" >&2
   exit 1
 }
@@ -168,6 +173,11 @@ load() {
   sbx template load "$tmp/image.tar"
 }
 
+# version_of <image>: prints the version that the image records in its version file.
+version_of() {
+  docker run --rm --entrypoint cat "$1" /usr/local/share/sbx-stack/VERSION | cut -d' ' -f1
+}
+
 # drop <tag>: removes the tag from sbx and from docker. A tag that does not exist is no error.
 drop() {
   sbx template rm --force "$1" >/dev/null 2>&1 || true
@@ -179,10 +189,25 @@ if [ "$rollback" -eq 1 ]; then
     echo "there is no $previous image to roll back to" >&2
     exit 1
   }
+  # The previous image comes back with its own version: under its major tag and its version tag.
+  version=$(version_of "$previous") || version=""
+  is_version "$version" || {
+    echo "cannot read the version of $previous: nothing is changed" >&2
+    exit 1
+  }
+  tag=sbx-stack-base:${version%%.*}
+  version_tag=sbx-stack-base:$version
   docker tag "$previous" "$tag"
-  load "$tag"
+  docker tag "$previous" "$version_tag"
+  load "$tag" "$version_tag"
+  [ "$old_version_tag" = "$version_tag" ] || drop "$old_version_tag"
+  if [ "$old_tag" != "$tag" ]; then
+    drop "$old_tag"
+    echo "removed $old_tag: a file that names it must name $tag again" >&2
+  fi
+  echo "$version" >VERSION
   docker tag "$previous" "$good"
-  echo "loaded the image that was good before the last one as $tag"
+  echo "loaded the image that was good before the last one as $tag and $version_tag"
   finished=1
   exit 0
 fi
@@ -277,6 +302,7 @@ load "$version_tag"
 [ "$old_version_tag" = "$version_tag" ] || drop "$old_version_tag"
 [ "$had_good" -eq 0 ] || docker tag "$good" "$previous"
 docker tag "$tag" "$good"
+echo "the version is $version: the template is loaded as $tag and as $version_tag"
 docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "size of %s: %.0f MB\n", "'"$tag"'", $1 / 1e6}'
 echo "what $tag holds (layer, name, version):"
 docker run --rm --entrypoint cat "$tag" /usr/local/share/sbx-stack/versions.txt

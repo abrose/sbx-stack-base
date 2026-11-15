@@ -52,6 +52,11 @@ case "$1 ${2:-}" in
     ;;
   run\ *)
     case "$*" in
+      # STUB_VERSION is the version that every image records in its version file; "fail" makes the read fail.
+      *sbx-stack/VERSION*)
+        [ "${STUB_VERSION:-0.2.0}" != fail ] || exit 1
+        echo "${STUB_VERSION:-0.2.0} abc1234"
+        ;;
       *lazy-lock.json*)
         [ "${STUB_LOCK:-ok}" != fail ] || exit 1
         [ "${STUB_LOCK:-ok}" != broken ] || exit 0
@@ -450,6 +455,41 @@ expect "a passed major bump: the old major tag stays" is "$tag" old
 expect "a passed major bump: the new major tag names the new image" is_new sbx-stack-base:1
 expect "a passed major bump: the new version tag names the same image" same sbx-stack-base:1.0.0 sbx-stack-base:1
 expect "a passed major bump: the old version tag is gone" absent "$vtag"
+
+# The rollback: the previous image comes back under its two tags, and VERSION gets its version.
+set_version 0.3.0
+images "$tag" bad "$next" bad "$good" bad "$previous" old
+build STUB_VERSION=0.2.0 -- --rollback
+expect "rollback after a bump: exit 0" exit_is 0
+expect "rollback after a bump: VERSION is the version of the previous image" version_is 0.2.0
+expect "rollback after a bump: the major tag names the previous image" is "$tag" old
+expect "rollback after a bump: its version tag names it too" is "$vtag" old
+expect "rollback after a bump: the newer version tag is gone from docker" absent "$next"
+expect "rollback after a bump: the newer version tag is gone from sbx" called "sbx template rm --force $next"
+expect "rollback after a bump: one template load" times 1 "sbx template load"
+expect "rollback after a bump: the load has both tags" called "docker image save $tag $vtag "
+expect "rollback after a bump: the previous image is the good one" is "$good" old
+set_version 0.2.0
+images "$tag" bad "$vtag" bad "$good" bad "$previous" old
+build STUB_VERSION=0.2.0 -- --rollback
+expect "rollback with the same version: the version tag names the previous image" is "$vtag" old
+expect "rollback with the same version: no template is removed" not_called "sbx template rm"
+set_version 1.0.0
+images "$tag" old sbx-stack-base:1 bad sbx-stack-base:1.0.0 bad "$good" bad "$previous" old
+build STUB_VERSION=0.2.0 -- --rollback
+expect "rollback over a major bump: VERSION" version_is 0.2.0
+expect "rollback over a major bump: the newer major tag is gone" absent sbx-stack-base:1
+expect "rollback over a major bump: the newer version tag is gone" absent sbx-stack-base:1.0.0
+expect "rollback over a major bump: says which tag the files must name" said "must name $tag again"
+set_version 0.3.0
+images "$tag" bad "$next" bad "$good" bad "$previous" old
+build STUB_VERSION=fail -- --rollback
+expect "rollback, the version of the previous image cannot be read: exit 1" exit_is 1
+expect "rollback, the version cannot be read: says so" said "cannot read the version of $previous"
+expect "rollback, the version cannot be read: no template load" not_called "sbx template load"
+expect "rollback, the version cannot be read: VERSION is unchanged" version_is 0.3.0
+expect "rollback, the version cannot be read: the tag is unchanged" is "$tag" bad
+set_version "$version"
 
 # The record of the commit: the image gets the commit, with a mark when the folder has changes that are not committed.
 fresh
