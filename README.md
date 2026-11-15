@@ -128,9 +128,10 @@ Mac takes the newest version of everything, with or without `--update`.
 2. It builds the image. A layer builds again when one of its files changed or when `--update` names it.
 3. It loads the image into sbx as `sbx-stack-base:<major version>`, the tag that project files name.
 4. It runs `tests/check.sh` on the new template.
-5. If the check passes, it writes the new version to `VERSION` and loads the image as `sbx-stack-base:<version>`
-   too. The new image becomes `sbx-stack-base:good`, and the image that was `good` becomes
-   `sbx-stack-base:previous`. `build.sh` prints the version, the image size and what the image holds.
+5. If the check passes, the new image becomes `sbx-stack-base:good`, and the image that was `good` becomes
+   `sbx-stack-base:previous`. Then `build.sh` loads the image as `sbx-stack-base:<version>` too, removes each
+   other version tag, and writes the new version to `VERSION` as its last step. It prints the version, the image
+   size and what the image holds.
 6. If the check fails, it loads `sbx-stack-base:good` again and exits 1. If the build fails, it loads nothing. In
    both cases `VERSION` stays as it was.
 
@@ -176,6 +177,10 @@ What to know about the tags (`<major version>`, `<version>`, `good`, `previous`)
 
 - The new template is loaded while its check runs. If you stop `build.sh` during the check, the unchecked template
   stays loaded. Run `build.sh` again: `good` did not move.
+- If `build.sh` stops after the passed check, it says so and `VERSION` stays as it was. Run the same command
+  again: it gives the same version, and it removes a version tag that the stopped run left.
+- A build that gives the `good` image again (nothing changed) leaves `previous` as it is, so the image to roll back
+  to stays.
 - The tags live in docker. `docker image prune -a` and `docker system prune -a` remove them, and the loaded sbx
   template stays. The next `build.sh` then warns that it cannot restore an earlier image, before it builds.
 - On the first build there is no `good` image. If its check fails, the failed template stays loaded.

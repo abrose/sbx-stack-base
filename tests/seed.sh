@@ -88,6 +88,7 @@ check "lib.sh defines fetch_latest, latest_version, fetch_release, clone_head, r
 check "plugins.txt names 2 marketplaces" count 2 '^marketplace ' layers/claude/plugins.txt
 check "plugins.txt names 5 plugins" count 5 '^plugin ' layers/claude/plugins.txt
 check "tests/check.sh asserts each plugin of plugins.txt" plugins_in_check
+check "VERSION has one line" count 1 '' VERSION
 check "VERSION is x.y.z" grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' VERSION
 check "the README names the major tag in the project file" grep -q 'template: sbx-stack-base:0$' README.md
 check "no project file line and no command of the README names a full version" \

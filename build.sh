@@ -22,9 +22,11 @@ usage() {
   exit 2
 }
 
-# is_version <text>: true when the text is a version x.y.z, with no leading zero in a number.
+# is_version <text>: true when the whole text is one version x.y.z, with no leading zero in a number. A text with
+# more lines (a merge conflict in VERSION) is no version.
 is_version() {
-  echo "$1" | grep -qE '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  local pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  [[ $1 =~ $pattern ]]
 }
 
 # bumped <version> <level>: prints the version after a bump of the level.
@@ -137,7 +139,6 @@ fi
 tag=sbx-stack-base:${version%%.*}
 version_tag=sbx-stack-base:$version
 old_tag=sbx-stack-base:${old_version%%.*}
-old_version_tag=sbx-stack-base:$old_version
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
 check=${SBX_STACK_CHECK:-tests/check.sh}
@@ -146,14 +147,24 @@ tmp=$(mktemp -d)
 # When bash stops the script on an unset variable, it exits with the status of this trap, so the trap fails unless
 # the script reached its end.
 finished=0
+passed_check=0
 cleanup() {
   rm -rf "$tmp"
-  [ "$finished" -eq 1 ] || exit 1
+  [ "$finished" -eq 0 ] || return 0
+  # VERSION is the last thing that a build writes, so the same command gives the same version again.
+  [ "$passed_check" -eq 0 ] ||
+    echo "the check passed, but build.sh stopped before its end: VERSION is still $old_version." \
+      "Run the same command again" >&2
+  exit 1
 }
 trap cleanup EXIT
 
 exists() {
   docker image inspect "$1" >/dev/null 2>&1
+}
+
+image_id() {
+  docker image inspect "$1" --format '{{.Id}}'
 }
 
 # newest_kit: prints the newest version tag (x.y.z) of the Claude kit image on Docker Hub.
@@ -185,6 +196,28 @@ drop() {
   docker image rm "$1" >/dev/null 2>&1 || true
 }
 
+# version_tags: prints each version tag (sbx-stack-base:x.y.z) that docker or sbx holds.
+version_tags() {
+  local name
+  {
+    docker image ls sbx-stack-base --format '{{.Tag}}'
+    sbx template ls --json | jq -r '.[] | select(.repository | test("(^|/)sbx-stack-base$")) | .tag'
+  } | sort -u | while read -r name; do
+    ! is_version "$name" || echo "sbx-stack-base:$name"
+  done
+}
+
+# drop_other_versions <tag>: removes each version tag but this one, so one version tag exists at a time. The list
+# comes from docker and from sbx, not from VERSION: a build that stopped, or a change of VERSION by hand, can leave
+# a version tag that VERSION does not name.
+drop_other_versions() {
+  local list stale
+  list=$(version_tags)
+  for stale in $list; do
+    [ "$stale" = "$1" ] || drop "$stale"
+  done
+}
+
 if [ "$rollback" -eq 1 ]; then
   exists "$previous" || {
     echo "there is no $previous image to roll back to" >&2
@@ -201,7 +234,7 @@ if [ "$rollback" -eq 1 ]; then
   docker tag "$previous" "$tag"
   docker tag "$previous" "$version_tag"
   load "$tag" "$version_tag"
-  [ "$old_version_tag" = "$version_tag" ] || drop "$old_version_tag"
+  drop_other_versions "$version_tag"
   if [ "$old_tag" != "$tag" ]; then
     drop "$old_tag"
     echo "removed $old_tag: a file that names it must name $tag again" >&2
@@ -297,12 +330,18 @@ if ! SBX_STACK_VERSION=$version "$check"; then
   exit 1
 fi
 
-echo "$version" >VERSION
+# The check passed. The state tags move first: they are in docker only, so a rollback knows this image also when a
+# later step fails. A build that gives the good image again (no change, or the same command after a stop) leaves
+# previous as it is: else the image to roll back to is lost. VERSION comes last.
+passed_check=1
+if [ "$had_good" -eq 1 ] && [ "$(image_id "$good")" != "$(image_id "$tag")" ]; then
+  docker tag "$good" "$previous"
+fi
+docker tag "$tag" "$good"
 docker tag "$tag" "$version_tag"
 load "$version_tag"
-[ "$old_version_tag" = "$version_tag" ] || drop "$old_version_tag"
-[ "$had_good" -eq 0 ] || docker tag "$good" "$previous"
-docker tag "$tag" "$good"
+drop_other_versions "$version_tag"
+echo "$version" >VERSION
 echo "the version is $version: the template is loaded as $tag and as $version_tag"
 docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "size of %s: %.0f MB\n", "'"$tag"'", $1 / 1e6}'
 echo "what $tag holds (layer, name, version):"

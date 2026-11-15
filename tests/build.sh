@@ -37,8 +37,16 @@ case "$1 ${2:-}" in
     case "$*" in
       *sbx-stack.claude-kit*) echo "${STUB_KIT:-}" ;;
       *sbx-stack.refresh.*) echo "${STUB_LABEL:-}" ;;
+      *'{{.Id}}'*) image_of "$3" ;;
       *) echo 1000000 ;;
     esac
+    ;;
+  "image ls")
+    awk '{print $1}' "$STUB_STATE" | sed -n 's/^sbx-stack-base://p'
+    ;;
+  "image save")
+    # STUB_SAVE_FAIL is a tag: the save of this tag fails.
+    [ "$3" != "${STUB_SAVE_FAIL:-}" ] || exit 1
     ;;
   "image rm")
     [ -n "$(image_of "$3")" ] || exit 1
@@ -71,13 +79,22 @@ case "$1 ${2:-}" in
       shift
     done
     untag "$2"
-    echo "$2 built-$(wc -l <"$STUB_LOG" | tr -d ' ')" >>"$STUB_STATE"
+    # STUB_BUILD_ID is the id of the image that the build gives; without it each build gives a new image.
+    echo "$2 ${STUB_BUILD_ID:-built-$(wc -l <"$STUB_LOG" | tr -d ' ')}" >>"$STUB_STATE"
     ;;
 esac
 EOF
+# The sbx stub answers the template list: STUB_TEMPLATES is a file with the list as JSON, "fail" makes the list fail,
+# and without it the list is empty.
 cat >"$bin/sbx" <<'EOF'
 #!/usr/bin/env bash
 echo "sbx $*" >>"$STUB_LOG"
+case "$1 ${2:-}" in
+  "template ls")
+    [ "${STUB_TEMPLATES:-}" != fail ] || exit 1
+    if [ -n "${STUB_TEMPLATES:-}" ]; then cat "$STUB_TEMPLATES"; else echo '[]'; fi
+    ;;
+esac
 EOF
 # The curl stub answers the tag list of the Claude kit image; STUB_TAGS=fail makes it fail.
 cat >"$bin/curl" <<'EOF'
@@ -183,6 +200,8 @@ expect() {
 this_run() { awk '/^--- run$/ {text = ""; next} {text = text $0 "\n"} END {printf "%s", text}' "$calls"; }
 called() { this_run | grep -qF -- "$1"; }
 not_called() { ! this_run | grep -qF -- "$1"; }
+# no_call <line>: no call of this run is this whole line.
+no_call() { ! this_run | grep -qxF -- "$1"; }
 times() { [ "$(this_run | grep -cF -- "$2")" -eq "$1" ]; }
 said() { grep -qF -- "$1" "$out"; }
 not_said() { ! grep -qF -- "$1" "$out"; }
@@ -415,6 +434,18 @@ for wrong in 0.2 v0.2.0 ""; do
   expect "VERSION is '$wrong': says so" said "VERSION must be x.y.z"
   expect "VERSION is '$wrong': no build" not_called "docker build"
 done
+# A file with more than one line, as a merge conflict leaves it: one line that is a version is not enough.
+fresh
+printf '<<<<<<< HEAD\n0.2.0\n=======\n0.3.0\n>>>>>>> other\n' >"$work/VERSION"
+build SBX_STACK_CHECK=true -- --bump minor
+expect "VERSION has conflict marks: exit 1" exit_is 1
+expect "VERSION has conflict marks: says so" said "VERSION must be x.y.z"
+expect "VERSION has conflict marks: no build" not_called "docker build"
+fresh
+printf '0.2.0\n0.3.0\n' >"$work/VERSION"
+build SBX_STACK_CHECK=true -- --bump none
+expect "VERSION has two versions: exit 1" exit_is 1
+expect "VERSION has two versions: no build" not_called "docker build"
 set_version "$version"
 
 # The two tags: the build, the load and the check use the major tag. The version tag comes after a passed check.
@@ -426,9 +457,12 @@ expect "bump, the check passes: the version tag names the same image" same "$nex
 expect "bump, the check passes: the old version tag is gone from docker" absent "$vtag"
 expect "bump, the check passes: the old version tag is gone from sbx" called "sbx template rm --force $vtag"
 expect "bump, the check passes: two template loads" times 2 "sbx template load"
+expect "bump, the check passes: the first load is the major tag" called "docker image save $tag -o"
+expect "bump, the check passes: the second load is the version tag" called "docker image save $next -o"
 expect "bump, the check passes: the new image is the good one" same "$good" "$tag"
 fresh
 build SBX_STACK_CHECK=true -- --bump none
+expect "no bump: the version tag is loaded again" called "docker image save $vtag -o"
 expect "no bump: the version tag names the new image" same "$vtag" "$tag"
 expect "no bump: the major tag names the new image" is_new "$tag"
 expect "no bump: no template is removed" not_called "sbx template rm"
@@ -456,6 +490,54 @@ expect "a passed major bump: the new major tag names the new image" is_new sbx-s
 expect "a passed major bump: the new version tag names the same image" same sbx-stack-base:1.0.0 sbx-stack-base:1
 expect "a passed major bump: the old version tag is gone" absent "$vtag"
 
+# One version tag at a time: a passed build removes each other version tag that docker or sbx holds, also one that
+# VERSION does not name (a build that stopped, a VERSION that changed by hand).
+fresh
+images "$tag" old "$vtag" old sbx-stack-base:0.1.9 older "$good" old "$previous" older
+echo '[{"repository":"docker.io/library/sbx-stack-base","tag":"0"},
+{"repository":"docker.io/library/sbx-stack-base","tag":"0.1.8"},
+{"repository":"docker.io/library/other-base","tag":"0.1.7"}]' >"$tmp/templates"
+build SBX_STACK_CHECK=true "STUB_TEMPLATES=$tmp/templates" -- --bump minor
+expect "a stale version tag in docker is gone" absent sbx-stack-base:0.1.9
+expect "a stale version tag in docker is gone from sbx" called "sbx template rm --force sbx-stack-base:0.1.9"
+expect "a stale version tag that only sbx holds is gone" called "sbx template rm --force sbx-stack-base:0.1.8"
+expect "the new version tag stays" same "$next" "$tag"
+expect "the major tag is not removed" no_call "sbx template rm --force $tag"
+expect "the good tag is not removed" no_call "sbx template rm --force $good"
+expect "a template of another image is not removed" not_called "0.1.7"
+
+# A build that stops after the passed check: the version tag does not reach sbx.
+fresh
+images "$tag" old "$vtag" old "$good" old "$previous" older
+build SBX_STACK_CHECK=true "STUB_SAVE_FAIL=$next" -- --bump minor
+expect "the load of the version tag fails: exit 1" exit_is 1
+expect "the load of the version tag fails: says that the check passed" said "the check passed, but"
+expect "the load of the version tag fails: names the command to run" said "Run the same command again"
+expect "the load of the version tag fails: VERSION stays" version_is 0.2.0
+expect "the load of the version tag fails: the new image is the good one" same "$good" "$tag"
+expect "the load of the version tag fails: the image that was good is previous" is "$previous" old
+build SBX_STACK_CHECK=true -- --bump minor
+expect "the same command again: exit 0" exit_is 0
+expect "the same command again: the version" version_is 0.3.0
+expect "the same command again: the old version tag is gone" absent "$vtag"
+expect "the same command again: the old version tag is gone from sbx" called "sbx template rm --force $vtag"
+fresh
+build SBX_STACK_CHECK=true STUB_TEMPLATES=fail -- --bump minor
+expect "the template list fails after the check: exit 1" exit_is 1
+expect "the template list fails after the check: says that the check passed" said "the check passed, but"
+expect "the template list fails after the check: VERSION stays" version_is 0.2.0
+fresh
+build SBX_STACK_CHECK=false -- --bump minor
+expect "the check fails: no line about a passed check" not_said "the check passed"
+
+# A build that gives the good image again (no change, or the same command after a stop) keeps the previous image.
+fresh
+images "$tag" old "$vtag" old "$good" old "$previous" older
+build SBX_STACK_CHECK=true STUB_BUILD_ID=old -- --bump none
+expect "the build gives the good image again: exit 0" exit_is 0
+expect "the build gives the good image again: previous stays" is "$previous" older
+expect "the build gives the good image again: good stays" is "$good" old
+
 # The rollback: the previous image comes back under its two tags, and VERSION gets its version.
 set_version 0.3.0
 images "$tag" bad "$next" bad "$good" bad "$previous" old
@@ -481,6 +563,12 @@ expect "rollback over a major bump: VERSION" version_is 0.2.0
 expect "rollback over a major bump: the newer major tag is gone" absent sbx-stack-base:1
 expect "rollback over a major bump: the newer version tag is gone" absent sbx-stack-base:1.0.0
 expect "rollback over a major bump: says which tag the files must name" said "must name $tag again"
+# A build stopped after its check and before it wrote VERSION: docker has a version tag that VERSION does not name.
+set_version 0.2.0
+images "$tag" bad "$next" bad "$vtag" stale "$good" bad "$previous" old
+build STUB_VERSION=0.2.0 -- --rollback
+expect "rollback after a stopped build: the version tag that VERSION does not name is gone" absent "$next"
+expect "rollback after a stopped build: the version tag names the previous image" is "$vtag" old
 set_version 0.3.0
 images "$tag" bad "$next" bad "$good" bad "$previous" old
 build STUB_VERSION=fail -- --rollback

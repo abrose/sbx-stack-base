@@ -81,8 +81,13 @@ A wrong answer asks again.
    `/usr/local/share/sbx-stack/VERSION`, as today.
 2. It loads the image as the major tag and runs the check. `build.sh` gives the new version to
    `tests/check.sh` (env `SBX_STACK_VERSION`); with no such value the check reads `VERSION`, as today.
-3. When the check passes: it writes `VERSION`, loads the image under the version tag too, and removes the
-   version tag of the build before from docker and from sbx. Then `good` and `previous` move, as today.
+3. When the check passes: `good` and `previous` move first (they are docker tags only, so a rollback knows the
+   new image also when a later step fails). Then `build.sh` loads the image under the version tag too, removes
+   each other version tag that docker or sbx holds, and writes `VERSION` as its last step. A build that gives
+   the `good` image again leaves `previous` as it is. When `build.sh` stops after the passed check, it says so;
+   the same command again gives the same version and removes a version tag that the stopped run left.
+   (Changed after the review of 2026-11-15. The first order wrote `VERSION` first and removed only the version
+   tag that `VERSION` named: a failed load of the version tag left a stale version template for good.)
 4. When the build or the check fails: `VERSION` and the version tag stay as they were. The major tag gets the
    good image again, as today. After a failed major bump, the new major tag is removed.
 
@@ -92,7 +97,7 @@ moves it. The README says how to remove an old major tag.
 ### The rollback
 
 `build.sh --rollback` loads the `previous` image under its major tag and its version tag, writes its version to
-`VERSION`, and removes the newer version tag. The version of an image comes from the file
+`VERSION`, and removes each other version tag. The version of an image comes from the file
 `/usr/local/share/sbx-stack/VERSION` in it, which each image of this repo has. When the major version of the
 `previous` image is lower, `build.sh` also removes the newer major tag and says which tag the files must name
 again.
