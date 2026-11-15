@@ -13,6 +13,10 @@
 #   sbx-stack-base:<version>  the same image after a passed check; it shows the version in the list of templates
 #   sbx-stack-base:good       the last image that passed the check; only a passed check or a rollback moves it
 #   sbx-stack-base:previous   the image that was good before that one
+#
+# One file outside docker holds a copy of the good image: ~/.local/state/sbx-stack-base/good.tar (below
+# XDG_STATE_HOME when it is set; SBX_STACK_GOOD_COPY names another path). A build loads it when docker has no good
+# image, for example after "docker image prune -a".
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -141,6 +145,7 @@ version_tag=sbx-stack-base:$version
 old_tag=sbx-stack-base:${old_version%%.*}
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
+copy=${SBX_STACK_GOOD_COPY:-${XDG_STATE_HOME:-$HOME/.local/state}/sbx-stack-base/good.tar}
 check=${SBX_STACK_CHECK:-tests/check.sh}
 tmp=$(mktemp -d)
 
@@ -177,6 +182,39 @@ newest_kit() {
 read_lock() {
   docker run --rm --entrypoint cat "$good" /home/agent/.config/nvim/lazy-lock.json >"$lock" &&
     jq -e 'type == "object" and length > 0' "$lock" >/dev/null
+}
+
+# save_copy: saves the good image to the copy file. The save goes to another name first, so the name of the copy
+# never holds a part of a file.
+save_copy() {
+  mkdir -p "$(dirname "$copy")" && docker image save "$good" -o "$copy.new" && mv "$copy.new" "$copy"
+}
+
+# move_good <image>: the image is the good one from now on, and the copy outside docker holds it. The old copy goes
+# before the tag moves: a copy that is older than the good image would give a later build the old refresh values, and
+# so older versions of the tools with no message. A save that fails leaves no copy and does not stop the build.
+move_good() {
+  rm -f "$copy" "$copy.new"
+  docker tag "$1" "$good"
+  if ! save_copy; then
+    rm -f "$copy.new"
+    echo "cannot save $good to $copy: there is no copy of the good image now. The next passed build saves it again" >&2
+  fi
+}
+
+# restore_good: when docker has no good image and the copy exists, loads the copy. A copy that does not give the
+# good image stops the build: with no good image, the build would take the newest version of everything.
+restore_good() {
+  if exists "$good" || [ ! -f "$copy" ]; then
+    return 0
+  fi
+  if docker image load -i "$copy" >/dev/null && exists "$good"; then
+    echo "docker had no $good image: restored $good from $copy"
+    return 0
+  fi
+  echo "docker has no $good image, and cannot load it from $copy: nothing is built." \
+    "Remove the file to build with no good image" >&2
+  exit 1
 }
 
 # load <tag>...: loads the image of the tags into sbx, as a template with each of the tags.
@@ -240,12 +278,13 @@ if [ "$rollback" -eq 1 ]; then
     echo "removed $old_tag: a file that names it must name $tag again" >&2
   fi
   echo "$version" >VERSION
-  docker tag "$previous" "$good"
+  move_good "$previous"
   echo "loaded the image that was good before the last one as $tag and $version_tag"
   finished=1
   exit 0
 fi
 
+restore_good
 had_good=0
 if exists "$good"; then
   had_good=1
@@ -337,7 +376,7 @@ passed_check=1
 if [ "$had_good" -eq 1 ] && [ "$(image_id "$good")" != "$(image_id "$tag")" ]; then
   docker tag "$good" "$previous"
 fi
-docker tag "$tag" "$good"
+move_good "$tag"
 docker tag "$tag" "$version_tag"
 load "$version_tag"
 drop_other_versions "$version_tag"
