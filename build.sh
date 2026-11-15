@@ -126,7 +126,12 @@ if [ "$rollback" -eq 0 ]; then
   fi
   version=$(bumped "$old_version" "$level")
 fi
-tag=sbx-stack-base:$version
+# One image has two tags in docker and in sbx. Files name the major tag, so a bump of the minor or the patch level
+# changes no file. The version tag shows the version in the list of templates; it comes after a passed check.
+tag=sbx-stack-base:${version%%.*}
+version_tag=sbx-stack-base:$version
+old_tag=sbx-stack-base:${old_version%%.*}
+old_version_tag=sbx-stack-base:$old_version
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
 check=${SBX_STACK_CHECK:-tests/check.sh}
@@ -157,9 +162,16 @@ read_lock() {
     jq -e 'type == "object" and length > 0' "$lock" >/dev/null
 }
 
+# load <tag>...: loads the image of the tags into sbx, as a template with each of the tags.
 load() {
-  docker image save "$tag" -o "$tmp/image.tar"
+  docker image save "$@" -o "$tmp/image.tar"
   sbx template load "$tmp/image.tar"
+}
+
+# drop <tag>: removes the tag from sbx and from docker. A tag that does not exist is no error.
+drop() {
+  sbx template rm --force "$1" >/dev/null 2>&1 || true
+  docker image rm "$1" >/dev/null 2>&1 || true
 }
 
 if [ "$rollback" -eq 1 ]; then
@@ -168,7 +180,7 @@ if [ "$rollback" -eq 1 ]; then
     exit 1
   }
   docker tag "$previous" "$tag"
-  load
+  load "$tag"
   docker tag "$previous" "$good"
   echo "loaded the image that was good before the last one as $tag"
   finished=1
@@ -228,7 +240,10 @@ if [ "$nvim_refresh" != "$now" ]; then
   fi
 fi
 
+# The image records the commit of the repo. A build from files that are not committed gets a mark, so the record
+# does not name a commit that does not hold these files.
 revision=$(git rev-parse HEAD)
+[ -z "$(git status --porcelain)" ] || revision=$revision+changes
 if ! docker build "${options[@]}" \
   --build-arg GIT_USER_NAME="$(git config --global --get user.name || true)" \
   --build-arg GIT_USER_EMAIL="$(git config --global --get user.email || true)" \
@@ -240,11 +255,15 @@ if ! docker build "${options[@]}" \
   exit 1
 fi
 
-load
-if ! "$check"; then
-  if [ "$had_good" -eq 1 ]; then
+load "$tag"
+if ! SBX_STACK_VERSION=$version "$check"; then
+  if [ "$tag" != "$old_tag" ]; then
+    # A bump of the major level: the files still name the old major tag, and this build did not change it.
+    drop "$tag"
+    echo "the check failed: removed $tag; $old_tag is unchanged" >&2
+  elif [ "$had_good" -eq 1 ]; then
     docker tag "$good" "$tag"
-    load
+    load "$tag"
     echo "the check failed: restored the last image that passed the check" >&2
   else
     echo "the check failed: there is no earlier image to restore, so the failed $tag stays loaded" >&2
@@ -253,6 +272,9 @@ if ! "$check"; then
 fi
 
 echo "$version" >VERSION
+docker tag "$tag" "$version_tag"
+load "$version_tag"
+[ "$old_version_tag" = "$version_tag" ] || drop "$old_version_tag"
 [ "$had_good" -eq 0 ] || docker tag "$good" "$previous"
 docker tag "$tag" "$good"
 docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "size of %s: %.0f MB\n", "'"$tag"'", $1 / 1e6}'

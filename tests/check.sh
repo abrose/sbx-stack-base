@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Creates check-base from the loaded template sbx-stack-base:<VERSION>, asserts with sbx exec, asserts again after a
+# Creates check-base from the loaded template sbx-stack-base:<major version>, asserts with sbx exec, asserts again after a
 # stop and start, and removes the sandbox. Run build.sh first.
 # The single-quoted scripts run in the VM: their $ must stay literal here.
 # shellcheck disable=SC2016
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
-version=$(cat "$repo/VERSION")
-tag=sbx-stack-base:$version
+# build.sh gives the version of its build, because VERSION gets a new version only after this check passes.
+version=${SBX_STACK_VERSION:-$(cat "$repo/VERSION")}
+tag=sbx-stack-base:${version%%.*}
 name=check-base
 share=/usr/local/share/sbx-stack
 managed=/etc/claude-code/managed-settings.json

@@ -81,7 +81,12 @@ echo "curl $*" >>"$STUB_LOG"
 [ "${STUB_TAGS:-ok}" != fail ] || exit 22
 echo '{"results":[{"name":"latest"},{"name":"2.1.99"},{"name":"2.1.316"},{"name":"2.1.314"},{"name":"2.2.0-rc1"}]}'
 EOF
-chmod +x "$bin/docker" "$bin/sbx" "$bin/curl"
+# A check that passes and records the version that build.sh gives to it.
+cat >"$bin/check-env" <<'EOF'
+#!/usr/bin/env bash
+echo "${SBX_STACK_VERSION:-}" >"$CHECK_VERSION_FILE"
+EOF
+chmod +x "$bin/docker" "$bin/sbx" "$bin/curl" "$bin/check-env"
 
 cp "$repo/build.sh" "$work/"
 # The tests have their own version, so they do not depend on the version of the repo.
@@ -93,7 +98,9 @@ for layer in tools zsh git worktrunk yazi lazygit lazydocker claude nvim; do
 done
 git -C "$work" init -q
 git -C "$work" -c user.name=test -c user.email=test@example.com commit -q --allow-empty -m test
-tag=sbx-stack-base:$version
+# tag is the major tag, which files name. vtag is the version tag, which shows the version in the template list.
+tag=sbx-stack-base:${version%%.*}
+vtag=sbx-stack-base:$version
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
 : >"$calls"
@@ -154,7 +161,7 @@ set_version() { echo "$1" >"$work/VERSION"; }
 # fresh: the state before a version case: version 0.2.0, an image that is loaded and good.
 fresh() {
   set_version "$version"
-  images "$tag" old "$good" old
+  images "$tag" old "$vtag" old "$good" old
 }
 
 expect() {
@@ -195,7 +202,7 @@ images "$tag" old "$good" old
 build SBX_STACK_CHECK=true --
 expect "no update, a good image with no refresh labels: every layer is refreshed" not_called "REFRESH_NVIM= "
 expect "no update, a good image with no refresh labels: the plugin lock is empty" lock_is '{}'
-expect "check passes: one template load" times 1 "sbx template load"
+expect "check passes: two template loads, the major tag and then the version tag" times 2 "sbx template load"
 expect "check passes: the tag names the new image" is_new "$tag"
 expect "check passes: the new image is the good one" same "$good" "$tag"
 expect "check passes: the image that was good is previous" is "$previous" old
@@ -404,6 +411,59 @@ for wrong in 0.2 v0.2.0 ""; do
   expect "VERSION is '$wrong': no build" not_called "docker build"
 done
 set_version "$version"
+
+# The two tags: the build, the load and the check use the major tag. The version tag comes after a passed check.
+next=sbx-stack-base:0.3.0
+fresh
+build SBX_STACK_CHECK=true -- --bump minor
+expect "bump, the check passes: the major tag names the new image" is_new "$tag"
+expect "bump, the check passes: the version tag names the same image" same "$next" "$tag"
+expect "bump, the check passes: the old version tag is gone from docker" absent "$vtag"
+expect "bump, the check passes: the old version tag is gone from sbx" called "sbx template rm --force $vtag"
+expect "bump, the check passes: two template loads" times 2 "sbx template load"
+expect "bump, the check passes: the new image is the good one" same "$good" "$tag"
+fresh
+build SBX_STACK_CHECK=true -- --bump none
+expect "no bump: the version tag names the new image" same "$vtag" "$tag"
+expect "no bump: the major tag names the new image" is_new "$tag"
+expect "no bump: no template is removed" not_called "sbx template rm"
+fresh
+build "SBX_STACK_CHECK=$bin/check-env" "CHECK_VERSION_FILE=$tmp/check-version" -- --bump minor
+expect "the check gets the new version" [ "$(cat "$tmp/check-version")" = 0.3.0 ]
+fresh
+build SBX_STACK_CHECK=false -- --bump minor
+expect "bump, the check fails: no new version tag" absent "$next"
+expect "bump, the check fails: the old version tag stays" is "$vtag" old
+expect "bump, the check fails: the major tag names the good image again" is "$tag" old
+expect "bump, the check fails: no template is removed" not_called "sbx template rm"
+fresh
+build SBX_STACK_CHECK=false -- --bump major
+expect "a failed major bump: exit 1" exit_is 1
+expect "a failed major bump: the new major tag is gone from docker" absent sbx-stack-base:1
+expect "a failed major bump: the new major tag is gone from sbx" called "sbx template rm --force sbx-stack-base:1"
+expect "a failed major bump: the old major tag is unchanged" is "$tag" old
+expect "a failed major bump: one template load" times 1 "sbx template load"
+expect "a failed major bump: the version stays" version_is 0.2.0
+fresh
+build SBX_STACK_CHECK=true -- --bump major
+expect "a passed major bump: the old major tag stays" is "$tag" old
+expect "a passed major bump: the new major tag names the new image" is_new sbx-stack-base:1
+expect "a passed major bump: the new version tag names the same image" same sbx-stack-base:1.0.0 sbx-stack-base:1
+expect "a passed major bump: the old version tag is gone" absent "$vtag"
+
+# The record of the commit: the image gets the commit, with a mark when the folder has changes that are not committed.
+fresh
+git -C "$work" add -A
+git -C "$work" -c user.name=test -c user.email=test@example.com commit -q -m "all files"
+head=$(git -C "$work" rev-parse HEAD)
+build SBX_STACK_CHECK=true -- --bump none
+expect "all is committed: the image records the commit" called "--build-arg REVISION=$head "
+expect "all is committed: the label has the commit" called "--label org.opencontainers.image.revision=$head "
+echo change >"$work/not-committed"
+build SBX_STACK_CHECK=true -- --bump none
+expect "a change is not committed: the image records the commit with a mark" called "--build-arg REVISION=$head+changes "
+expect "a change is not committed: the label has the mark" called "--label org.opencontainers.image.revision=$head+changes "
+rm "$work/not-committed"
 
 [ "$fails" -eq 0 ] || {
   echo "$fails failed"
