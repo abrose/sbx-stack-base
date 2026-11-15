@@ -183,15 +183,19 @@ What to know about the tags (`<major version>`, `<version>`, `good`, `previous`)
   to stays.
 - The tags live in docker. `docker image prune -a` and `docker system prune -a` remove them, and the loaded sbx
   template stays. So `build.sh` keeps a copy of the `good` image outside docker, in the file
-  `~/.local/state/sbx-stack-base/good.tar` (below `XDG_STATE_HOME` when it is set; the variable
-  `SBX_STACK_GOOD_COPY` names another path). The file has about 1 GB, and each passed build and each rollback
-  writes it again (about 8 s).
+  `~/.local/state/sbx-stack-base/good.tar` (below `XDG_STATE_HOME` when it is set). The file has about 1 GB, and
+  each passed build and each rollback writes it again (about 8 s).
   - When docker has no `good` image, the next `build.sh` loads the copy and says "restored". The build then keeps
-    the Claude kit, the versions of the layers and the plugin lock, as before the prune.
+    the Claude kit and the plugin lock of Neovim. It keeps the versions of the layers only while docker's build
+    cache has them: after a prune that also empties the build cache (`docker system prune -a`,
+    `docker builder prune`), each layer builds again and takes its newest versions.
   - With no `good` image and no copy, `build.sh` warns that it cannot restore an earlier image, and the build takes
     the newest version of everything.
-  - A copy that does not load stops the build. Remove the file to build with no `good` image.
+  - A copy that does not load stops the build. If the file is broken, remove it. When docker does not answer,
+    `build.sh` says so: the copy is not the cause then.
   - `previous` has no copy: after a prune, `build.sh --rollback` has no image to roll back to.
+  - Only this `build.sh` keeps the copy in step with the tag. After a move of `good` by hand (`docker tag`), remove
+    the file: a copy that is older than the `good` image gives a later build older versions with no message.
 - On the first build there is no `good` image. If its check fails, the failed template stays loaded.
 
 A project template (`sbx-task template <project>` in `sbx-kit-builder`) holds the base it was saved from. After an

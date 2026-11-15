@@ -25,6 +25,11 @@ mkdir -p "$bin" "$work"
 cat >"$bin/docker" <<'EOF'
 #!/usr/bin/env bash
 echo "docker $*" >>"$STUB_LOG"
+# STUB_DOCKER_DOWN=1: docker does not answer, so each command fails.
+if [ "${STUB_DOCKER_DOWN:-0}" -ne 0 ]; then
+  echo "Cannot connect to the Docker daemon" >&2
+  exit 1
+fi
 image_of() { awk -v ref="$1" '$1 == ref {print $2}' "$STUB_STATE"; }
 untag() {
   grep -v "^$1 " "$STUB_STATE" >"$STUB_STATE.new" || true
@@ -51,6 +56,12 @@ case "$1 ${2:-}" in
     id=$(image_of "$ref")
     shift 3
     while [ $# -gt 1 ] && [ "$1" != -o ]; do shift; done
+    # STUB_SAVE_KILL is a tag: build.sh dies during the save of this tag, as with a kill or a loss of power.
+    if [ "$ref" = "${STUB_SAVE_KILL:-}" ]; then
+      [ "${1:-}" != -o ] || echo partial >"$2"
+      kill -KILL "$PPID"
+      exit 1
+    fi
     if [ "$ref" = "${STUB_SAVE_FAIL:-}" ]; then
       [ "${1:-}" != -o ] || echo partial >"$2"
       exit 1
@@ -147,7 +158,7 @@ previous=sbx-stack-base:previous
 : >"$calls"
 # The copy of the good image. Each run gets this path, so no test touches the copy of the owner. Its folder does not
 # exist before the first save.
-copy=$tmp/keep/good.tar
+copy=$tmp/keep/sbx-stack-base/good.tar
 
 # images <ref id>...: the images that exist before the next run. No copy of the good image exists.
 images() {
@@ -173,7 +184,7 @@ no_copy() { [ ! -e "$copy" ] && [ ! -e "$copy.new" ]; }
 # build <VAR=value>... -- <build.sh arguments>: runs build.sh with the stubs; sets rc, $calls and $out.
 # stdin is not a terminal, so build.sh asks nothing, also when a person runs these tests in a terminal.
 build() {
-  local envs=("PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" "SBX_STACK_GOOD_COPY=$copy")
+  local envs=("PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" "XDG_STATE_HOME=$tmp/keep")
   while [ "$1" != -- ]; do
     envs+=("$1")
     shift
@@ -197,7 +208,7 @@ build_on_terminal() {
   echo "--- run" >>"$calls"
   rc=0
   typed "$answers" |
-    env "PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" "SBX_STACK_GOOD_COPY=$copy" SBX_STACK_CHECK=true \
+    env "PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" "XDG_STATE_HOME=$tmp/keep" SBX_STACK_CHECK=true \
       script -q /dev/null "$BASH" "$work/build.sh" "$@" >"$out" 2>&1 || rc=$?
 }
 
@@ -683,6 +694,15 @@ build SBX_STACK_CHECK=true --
 expect "the copy gives no good tag: exit 1" exit_is 1
 expect "the copy gives no good tag: says so" said "cannot load"
 expect "the copy gives no good tag: no build" not_called "docker build"
+# docker is down: the copy is not the cause, and the owner must not remove it.
+images "$tag" old
+a_copy kept
+build SBX_STACK_CHECK=true STUB_DOCKER_DOWN=1 --
+expect "docker does not answer: exit 1" exit_is 1
+expect "docker does not answer: says so" said "docker does not answer"
+expect "docker does not answer: does not blame the copy" not_said "cannot load"
+expect "docker does not answer: no load" not_called "docker image load"
+expect "docker does not answer: the copy stays" copy_holds kept
 
 images "$tag" old
 build SBX_STACK_CHECK=true --
@@ -710,21 +730,35 @@ expect "a run that stops after the good tag moved: exit 1" exit_is 1
 expect "a run that stops after the good tag moved: the good image is a new one" is_new "$good"
 expect "a run that stops after the good tag moved: the copy holds the new good image" copy_holds "$(image_of "$good")"
 set_version "$version"
+# The old copy goes before the good tag moves: a run that dies during the save leaves no copy, never the old one.
+# The shell of this test reports the kill on stderr, so stderr goes nowhere for this run.
+images "$tag" old "$good" old
+a_copy old
+build SBX_STACK_CHECK=true "STUB_SAVE_KILL=$good" -- 2>/dev/null
+expect "a run that dies during the save: it died" [ "$rc" -gt 128 ]
+expect "a run that dies during the save: the good image is a new one" is_new "$good"
+expect "a run that dies during the save: the old copy is gone" [ ! -e "$copy" ]
+build SBX_STACK_CHECK=true --
+expect "the next passed build: no part of a file stays" [ ! -e "$copy.new" ]
+expect "the next passed build: the copy holds the good image" copy_holds "$(image_of "$good")"
 
-images "$tag" bad "$good" bad
+# A rollback needs the previous image. It does not read the copy.
+images "$tag" bad
 a_copy kept
 build -- --rollback
-expect "rollback, no previous image, a copy: exit 1" exit_is 1
-expect "rollback, no previous image, a copy: the copy is not loaded" not_called "docker image load"
-expect "rollback, no previous image, a copy: the copy is unchanged" copy_holds kept
+expect "rollback, no good and no previous image, a copy: exit 1" exit_is 1
+expect "rollback, no good and no previous image, a copy: the copy is not loaded" not_called "docker image load"
+expect "rollback, no good and no previous image, a copy: the copy is unchanged" copy_holds kept
 
-# The path with no SBX_STACK_GOOD_COPY. HOME and XDG_STATE_HOME are below the temporary folder.
+# The path of the copy has one source: XDG_STATE_HOME, or HOME. A variable of its own would leave a copy at the
+# other path, older than the good image. HOME is below the temporary folder here.
 images "$tag" old "$good" old
-build SBX_STACK_CHECK=true SBX_STACK_GOOD_COPY= "HOME=$tmp/home" XDG_STATE_HOME= --
-expect "no path variable: the copy is below HOME" [ -f "$tmp/home/.local/state/sbx-stack-base/good.tar" ]
+build SBX_STACK_CHECK=true "HOME=$tmp/home" XDG_STATE_HOME= --
+expect "no XDG_STATE_HOME: the copy is below HOME" [ -f "$tmp/home/.local/state/sbx-stack-base/good.tar" ]
 images "$tag" old "$good" old
-build SBX_STACK_CHECK=true SBX_STACK_GOOD_COPY= "HOME=$tmp/home" "XDG_STATE_HOME=$tmp/xdg" --
-expect "no path variable, XDG_STATE_HOME: the copy is below it" [ -f "$tmp/xdg/sbx-stack-base/good.tar" ]
+build SBX_STACK_CHECK=true "SBX_STACK_GOOD_COPY=$tmp/other.tar" --
+expect "no variable names another path: no file at that path" [ ! -e "$tmp/other.tar" ]
+expect "no variable names another path: the copy is at its one path" copy_holds "$(image_of "$good")"
 
 [ "$fails" -eq 0 ] || {
   echo "$fails failed"

@@ -15,8 +15,8 @@
 #   sbx-stack-base:previous   the image that was good before that one
 #
 # One file outside docker holds a copy of the good image: ~/.local/state/sbx-stack-base/good.tar (below
-# XDG_STATE_HOME when it is set; SBX_STACK_GOOD_COPY names another path). A build loads it when docker has no good
-# image, for example after "docker image prune -a".
+# XDG_STATE_HOME when it is set). A build loads it when docker has no good image, for example after
+# "docker image prune -a".
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -145,7 +145,9 @@ version_tag=sbx-stack-base:$version
 old_tag=sbx-stack-base:${old_version%%.*}
 good=sbx-stack-base:good
 previous=sbx-stack-base:previous
-copy=${SBX_STACK_GOOD_COPY:-${XDG_STATE_HOME:-$HOME/.local/state}/sbx-stack-base/good.tar}
+# The path of the copy has one source. A variable that names another path would leave a copy at this path, older
+# than the good image.
+copy=${XDG_STATE_HOME:-$HOME/.local/state}/sbx-stack-base/good.tar
 check=${SBX_STACK_CHECK:-tests/check.sh}
 tmp=$(mktemp -d)
 
@@ -208,12 +210,17 @@ restore_good() {
   if exists "$good" || [ ! -f "$copy" ]; then
     return 0
   fi
+  # "No good image" can also mean that docker is down. Then the copy is not the cause.
+  docker version >/dev/null 2>&1 || {
+    echo "docker does not answer: nothing is built. Start docker, then run build.sh again" >&2
+    exit 1
+  }
   if docker image load -i "$copy" >/dev/null && exists "$good"; then
     echo "docker had no $good image: restored $good from $copy"
     return 0
   fi
   echo "docker has no $good image, and cannot load it from $copy: nothing is built." \
-    "Remove the file to build with no good image" >&2
+    "If the file is broken, remove it: the next build then takes the newest version of everything" >&2
   exit 1
 }
 
