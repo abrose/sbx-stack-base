@@ -182,7 +182,16 @@ What to know about the tags (`<major version>`, `<version>`, `good`, `previous`)
 - A build that gives the `good` image again (nothing changed) leaves `previous` as it is, so the image to roll back
   to stays.
 - The tags live in docker. `docker image prune -a` and `docker system prune -a` remove them, and the loaded sbx
-  template stays. The next `build.sh` then warns that it cannot restore an earlier image, before it builds.
+  template stays. So `build.sh` keeps a copy of the `good` image outside docker, in the file
+  `~/.local/state/sbx-stack-base/good.tar` (below `XDG_STATE_HOME` when it is set; the variable
+  `SBX_STACK_GOOD_COPY` names another path). The file has about 1 GB, and each passed build and each rollback
+  writes it again (about 8 s).
+  - When docker has no `good` image, the next `build.sh` loads the copy and says "restored". The build then keeps
+    the Claude kit, the versions of the layers and the plugin lock, as before the prune.
+  - With no `good` image and no copy, `build.sh` warns that it cannot restore an earlier image, and the build takes
+    the newest version of everything.
+  - A copy that does not load stops the build. Remove the file to build with no `good` image.
+  - `previous` has no copy: after a prune, `build.sh --rollback` has no image to roll back to.
 - On the first build there is no `good` image. If its check fails, the failed template stays loaded.
 
 A project template (`sbx-task template <project>` in `sbx-kit-builder`) holds the base it was saved from. After an
