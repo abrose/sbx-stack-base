@@ -140,8 +140,8 @@ if command -v sbx-instance >/dev/null 2>&1; then
     exit 1
   }
   here=$(sbx-instance which) || {
-    echo "sbx-instance which names no sbx instance for the folder of build.sh: nothing is built." \
-      "Put a .sbx-instance file into this folder or into a folder above it" >&2
+    echo "sbx-instance which names no sbx instance for the folder of build.sh (its message is above):" \
+      "nothing is built" >&2
     exit 1
   }
   for name in $instances; do
@@ -187,11 +187,22 @@ tmp=$(mktemp -d)
 # the script reached its end.
 finished=0
 passed_check=0
+# others_started is 1 from the start of the loads into the other sbx instances. The instance of the folder has the
+# image then, and VERSION holds its version. stop_again is the instance whose daemon a load has to stop again.
+others_started=0
+stop_again=""
 cleanup() {
   rm -rf "$tmp"
   # A run that stopped during the save left a part of a file. The copy itself never has this name.
   rm -f "$copy.new" 2>/dev/null || true
   [ "$finished" -eq 0 ] || return 0
+  [ -z "$stop_again" ] || sbx-instance run "$stop_again" -- --no-input daemon stop >/dev/null 2>&1 || true
+  if [ "$others_started" -eq 1 ]; then
+    # The same command again would raise the version a second time.
+    echo "build.sh stopped during the loads into the other sbx instances. The image is good and" \
+      "VERSION holds $(cat VERSION 2>/dev/null). Not each instance has the image. Run: build.sh --load" >&2
+    exit 1
+  fi
   # VERSION is the last thing that a build writes, so the same command gives the same version again.
   [ "$passed_check" -eq 0 ] ||
     echo "the check passed, but build.sh stopped before its end: VERSION is still $old_version." \
@@ -317,22 +328,31 @@ drop_other_versions() {
   done
 }
 
+# daemon_stopped <answer of "sbx daemon status">: true when the daemon does not run. Only the first Status line
+# counts: a later line can be the state of a part of the daemon.
+daemon_stopped() {
+  local value
+  value=$(sed -n -e '/^ *Status:/{' -e 's/^ *Status: *//p' -e 'q' -e '}' <<<"$1")
+  [ "${value%"${value##*[![:space:]]}"}" = stopped ]
+}
+
 # load_into <instance> <version tag>: loads the saved image $tmp/others.tar into another sbx instance and removes
 # each other version tag there. A daemon that did not run before the load is stopped again, so a build leaves the
 # daemons as it found them.
 load_into() {
   local name=$1 keep=$2 state list stale failed=0
-  state=$(sbx-instance run "$name" -- daemon status 2>/dev/null) || state=""
-  if sbx-instance run "$name" -- template load "$tmp/others.tar"; then
-    if list=$(sbx-instance run "$name" -- template ls --json |
+  state=$(sbx-instance run "$name" -- --no-input daemon status 2>/dev/null) || state=""
+  ! daemon_stopped "$state" || stop_again=$name
+  if sbx-instance run "$name" -- --no-input template load "$tmp/others.tar"; then
+    if list=$(sbx-instance run "$name" -- --no-input template ls --json |
       jq -r '.[] | select(.repository | test("(^|/)sbx-stack-base$")) | .tag'); then
       for stale in $list; do
         if is_version "$stale" && [ "sbx-stack-base:$stale" != "$keep" ]; then
-          sbx-instance run "$name" -- template rm --force "sbx-stack-base:$stale" >/dev/null 2>&1 || true
+          sbx-instance run "$name" -- --no-input template rm --force "sbx-stack-base:$stale" >/dev/null 2>&1 || true
         fi
       done
       [ -z "$stale_major" ] ||
-        sbx-instance run "$name" -- template rm --force "$stale_major" >/dev/null 2>&1 || true
+        sbx-instance run "$name" -- --no-input template rm --force "$stale_major" >/dev/null 2>&1 || true
     else
       echo "cannot list the templates of the instance $name: an older version tag can stay there" >&2
       failed=1
@@ -340,8 +360,9 @@ load_into() {
   else
     failed=1
   fi
-  if grep -Eq '^ *Status: +stopped' <<<"$state"; then
-    sbx-instance run "$name" -- daemon stop >/dev/null 2>&1 || true
+  if [ -n "$stop_again" ]; then
+    sbx-instance run "$name" -- --no-input daemon stop >/dev/null 2>&1 || true
+    stop_again=""
   fi
   return "$failed"
 }
@@ -353,6 +374,7 @@ load_others() {
   local keep=$1 name missing=""
   shift
   [ -n "$others" ] || return 0
+  others_started=1
   if ! docker image save "$@" -o "$tmp/others.tar"; then
     echo "cannot save $* for the other sbx instances:$others. Then run: build.sh --load" >&2
     return 1

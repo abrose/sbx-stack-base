@@ -855,14 +855,23 @@ case "$1" in
   run)
     name=$2
     shift 3
+    [ "$1" != --no-input ] || shift
     case "$1 ${2:-}" in
       "daemon status")
         case " ${STUB_STOPPED:-} " in
           *" $name "*) echo "  Status:  stopped" ;;
           *) echo "  Status:  ● running" ;;
         esac
+        # STUB_STATUS_MORE=1: the answer has a second Status line, for a part of the daemon that does not run.
+        [ -z "${STUB_STATUS_MORE:-}" ] || echo "  Status:  stopped (kit registry)"
         ;;
       "template load")
+        # STUB_SIGNAL_IN is an instance: build.sh gets the signal TERM during the load into it.
+        if [ "${STUB_SIGNAL_IN:-}" = "$name" ]; then
+          kill -TERM "$PPID"
+          sleep 1
+          exit 1
+        fi
         case " ${STUB_LOAD_FAIL_IN:-} " in
           *" $name "*)
             echo "error: daemon fault" >&2
@@ -904,19 +913,19 @@ echo '[{"repository":"docker.io/library/sbx-stack-base","tag":"0"},
 ibuild SBX_STACK_CHECK=true "STUB_TEMPLATES=$tmp/templates" -- --bump minor
 expect "three instances: exit 0" exit_is 0
 expect "three instances: the check instance gets its two loads with plain sbx" times 2 "sbx template load"
-expect "three instances: the image goes into alpha" called "sbx-instance run alpha -- template load "
-expect "three instances: the image goes into beta" called "sbx-instance run beta -- template load "
+expect "three instances: the image goes into alpha" called "sbx-instance run alpha -- --no-input template load "
+expect "three instances: the image goes into beta" called "sbx-instance run beta -- --no-input template load "
 expect "three instances: no second load into the check instance" not_called "sbx-instance run check"
 expect "three instances: the other instances get the image after the loads of the check instance" \
   in_order "sbx template load" "sbx-instance run"
 expect "three instances: the load into the other instances has both tags" called "docker image save $tag $next -o"
 expect "three instances: a stale version tag is gone from alpha" \
-  call_is "sbx-instance run alpha -- template rm --force sbx-stack-base:0.1.8"
+  call_is "sbx-instance run alpha -- --no-input template rm --force sbx-stack-base:0.1.8"
 expect "three instances: a stale version tag is gone from beta" \
-  call_is "sbx-instance run beta -- template rm --force sbx-stack-base:0.1.8"
+  call_is "sbx-instance run beta -- --no-input template rm --force sbx-stack-base:0.1.8"
 expect "three instances: the new version tag stays in alpha" \
-  no_call "sbx-instance run alpha -- template rm --force $next"
-expect "three instances: the major tag stays in alpha" no_call "sbx-instance run alpha -- template rm --force $tag"
+  no_call "sbx-instance run alpha -- --no-input template rm --force $next"
+expect "three instances: the major tag stays in alpha" no_call "sbx-instance run alpha -- --no-input template rm --force $tag"
 expect "three instances: a template of another name stays in alpha" not_called "other-base"
 expect "three instances: the output names the instances" said "the instance alpha"
 expect "three instances: the version is the new one" version_is 0.3.0
@@ -940,8 +949,8 @@ ibuild SBX_STACK_CHECK=true STUB_LOAD_FAIL_IN=alpha -- --bump minor
 expect "a failed load into alpha: exit 1" exit_is 1
 expect "a failed load into alpha: the output names the instance" said "the instance alpha"
 expect "a failed load into alpha: the output names the repair" said "build.sh --load"
-expect "a failed load into alpha: beta still gets the image" called "sbx-instance run beta -- template load "
-expect "a failed load into alpha: no version tag is removed in alpha" not_called "sbx-instance run alpha -- template ls"
+expect "a failed load into alpha: beta still gets the image" called "sbx-instance run beta -- --no-input template load "
+expect "a failed load into alpha: no version tag is removed in alpha" not_called "sbx-instance run alpha -- --no-input template ls"
 expect "a failed load into alpha: the version is the new one" version_is 0.3.0
 expect "a failed load into alpha: the new image is the good one" is_new "$good"
 expect "a failed load into alpha: no line about a stop before the end" not_said "stopped before its end"
@@ -949,14 +958,44 @@ expect "a failed load into alpha: no line about a stop before the end" not_said 
 fresh
 ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha --
 expect "a daemon that was stopped: exit 0" exit_is 0
-expect "a daemon that was stopped is stopped again" call_is "sbx-instance run alpha -- daemon stop"
+expect "a daemon that was stopped is stopped again" call_is "sbx-instance run alpha -- --no-input daemon stop"
 expect "a daemon that was stopped: the stop comes after the load" \
-  in_order "sbx-instance run alpha -- template load" "sbx-instance run alpha -- daemon stop"
-expect "a daemon that ran is not stopped" not_called "sbx-instance run beta -- daemon stop"
+  in_order "sbx-instance run alpha -- --no-input template load" "sbx-instance run alpha -- --no-input daemon stop"
+expect "a daemon that ran is not stopped" not_called "sbx-instance run beta -- --no-input daemon stop"
 fresh
 ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha STUB_LOAD_FAIL_IN=alpha --
 expect "a daemon that was stopped, and the load fails: it is stopped again" \
-  call_is "sbx-instance run alpha -- daemon stop"
+  call_is "sbx-instance run alpha -- --no-input daemon stop"
+
+fresh
+ibuild SBX_STACK_CHECK=true STUB_STATUS_MORE=1 --
+expect "a running daemon with a second Status line is not stopped" not_called "daemon stop"
+fresh
+ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha STUB_STATUS_MORE=1 --
+expect "a stopped daemon with a second Status line is stopped again" \
+  call_is "sbx-instance run alpha -- --no-input daemon stop"
+
+# A signal during the loads into the other instances: VERSION holds the new version already, so the same command
+# again would raise the version a second time. The output names the command that does the loads again.
+fresh
+ibuild SBX_STACK_CHECK=true STUB_SIGNAL_IN=alpha STUB_STOPPED=alpha -- --bump minor
+expect "a signal during the load into alpha: the status is not 0" [ "$rc" -ne 0 ]
+expect "a signal during the load into alpha: VERSION holds the new version" version_is 0.3.0
+expect "a signal during the load into alpha: no line that VERSION is the old one" not_said "VERSION is still"
+expect "a signal during the load into alpha: no advice to run the same command again" \
+  not_said "Run the same command again"
+expect "a signal during the load into alpha: the output names the version" said "VERSION holds 0.3.0"
+expect "a signal during the load into alpha: the output names the repair" said "build.sh --load"
+expect "a signal during the load into alpha: its daemon, which was stopped, is stopped again" \
+  call_is "sbx-instance run alpha -- --no-input daemon stop"
+set_version 0.3.0
+images "$tag" bad "$next" bad "$good" bad "$previous" old
+ibuild STUB_VERSION=0.2.0 STUB_SIGNAL_IN=alpha -- --rollback
+expect "rollback, a signal during the load into alpha: the output names the repair" said "build.sh --load"
+fresh
+images "$tag" old "$vtag" old "$good" old
+ibuild STUB_VERSION=0.2.0 STUB_SIGNAL_IN=beta -- --load
+expect "--load, a signal during the load into beta: the output names the repair" said "build.sh --load"
 
 # --load: the good image goes into each target again. No build, no check.
 fresh
@@ -967,8 +1006,8 @@ expect "--load: no build" not_called "docker build"
 expect "--load: the major tag names the good image" is "$tag" old
 expect "--load: one load into the check instance, with both tags" times 1 "sbx template load"
 expect "--load: the save has both tags" called "docker image save $tag $vtag -o"
-expect "--load: the image goes into alpha" called "sbx-instance run alpha -- template load "
-expect "--load: the image goes into beta" called "sbx-instance run beta -- template load "
+expect "--load: the image goes into alpha" called "sbx-instance run alpha -- --no-input template load "
+expect "--load: the image goes into beta" called "sbx-instance run beta -- --no-input template load "
 expect "--load: VERSION is unchanged" version_is 0.2.0
 expect "--load: the good image is unchanged" is "$good" old
 expect "--load: previous is unchanged" is "$previous" older
@@ -980,13 +1019,13 @@ fresh
 ibuild STUB_VERSION=0.2.0 STUB_LOAD_FAIL_IN=beta -- --load
 expect "--load, a failed load into beta: exit 1" exit_is 1
 expect "--load, a failed load into beta: the output names the instance" said "the instance beta"
-expect "--load, a failed load into beta: alpha gets the image" called "sbx-instance run alpha -- template load "
+expect "--load, a failed load into beta: alpha gets the image" called "sbx-instance run alpha -- --no-input template load "
 images
 a_copy kept
 ibuild STUB_VERSION=0.2.0 -- --load
 expect "--load, no good image, a copy: the copy is loaded first" called "docker image load -i $copy"
 expect "--load, no good image, a copy: the major tag names the restored image" is "$tag" kept
-expect "--load, no good image, a copy: the image goes into alpha" called "sbx-instance run alpha -- template load "
+expect "--load, no good image, a copy: the image goes into alpha" called "sbx-instance run alpha -- --no-input template load "
 images
 ibuild -- --load
 expect "--load, no good image, no copy: exit 1" exit_is 1
@@ -1006,16 +1045,16 @@ set_version 0.3.0
 images "$tag" bad "$next" bad "$good" bad "$previous" old
 ibuild STUB_VERSION=0.2.0 -- --rollback
 expect "rollback, three instances: exit 0" exit_is 0
-expect "rollback, three instances: the previous image goes into alpha" called "sbx-instance run alpha -- template load "
-expect "rollback, three instances: the previous image goes into beta" called "sbx-instance run beta -- template load "
+expect "rollback, three instances: the previous image goes into alpha" called "sbx-instance run alpha -- --no-input template load "
+expect "rollback, three instances: the previous image goes into beta" called "sbx-instance run beta -- --no-input template load "
 expect "rollback, three instances: VERSION is the version of the previous image" version_is 0.2.0
 set_version 1.0.0
 images sbx-stack-base:1 bad sbx-stack-base:1.0.0 bad "$good" bad "$previous" old
 ibuild STUB_VERSION=0.2.0 -- --rollback
 expect "rollback over a major bump: the newer major tag is gone from alpha" \
-  call_is "sbx-instance run alpha -- template rm --force sbx-stack-base:1"
+  call_is "sbx-instance run alpha -- --no-input template rm --force sbx-stack-base:1"
 expect "rollback over a major bump: the newer major tag is gone from beta" \
-  call_is "sbx-instance run beta -- template rm --force sbx-stack-base:1"
+  call_is "sbx-instance run beta -- --no-input template rm --force sbx-stack-base:1"
 set_version 0.3.0
 images "$tag" bad "$next" bad "$good" bad "$previous" old
 ibuild STUB_VERSION=0.2.0 STUB_LOAD_FAIL_IN=alpha -- --rollback

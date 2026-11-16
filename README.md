@@ -159,8 +159,10 @@ sbx can run separate instances, one for each Claude account (the repo `sbx-insta
 - **`build.sh --load`** loads the good image into each instance again, under its two tags, and removes each other
   version tag. It builds nothing and runs no check. Use it for a new instance and after a failed load.
 - **`build.sh --rollback`** loads the previous image into each instance.
+- **If `build.sh` stops during the loads** (a signal, a closed terminal), the image is good and `VERSION` holds
+  its version. Run `build.sh --load` then. The same build command again would raise the version a second time.
 - **Daemons.** If the daemon of another instance did not run before its load, `build.sh` stops it again after the
-  load. So a build leaves the daemons as it found them.
+  load. The daemon of the instance of this folder stays as the check left it.
 - **Disk.** Each instance holds its own copy of the template: about 4.2 GB for each.
 
 ### The version
