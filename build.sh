@@ -5,6 +5,7 @@
 #   build.sh --update           takes the newest version of everything, the Claude kit image included
 #   build.sh --update <layer>…  takes the newest versions for the named layers (the folders in layers/)
 #   build.sh --rollback         loads the image that passed the check before the last one
+#   build.sh --load             loads the good image into sbx again: no build and no check
 #   build.sh --bump <level> …   raises the version in VERSION when the check passes: major, minor, patch or none.
 #                               With no --bump, build.sh asks for the level when stdin is a terminal.
 #
@@ -17,11 +18,16 @@
 # One file outside docker holds a copy of the good image: ~/.local/state/sbx-stack-base/good.tar (below
 # XDG_STATE_HOME when it is set). A build loads it when docker has no good image, for example after
 # "docker image prune -a".
+#
+# With the tool sbx-instance in PATH (the repo sbx-instances), each sbx instance on its list gets the template. The
+# build, the first load and the check use plain sbx, so they run in the instance of this folder. After a passed
+# check, each other instance gets the image with "sbx-instance run <name> -- template load". --load does the loads
+# again: for a new instance, and after a load that failed.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 usage() {
-  echo "usage: build.sh [--bump major|minor|patch|none] [--update [layer...]] | --rollback" >&2
+  echo "usage: build.sh [--bump major|minor|patch|none] [--update [layer...]] | --rollback | --load" >&2
   echo "layers: $(all_layers | tr '\n' ' ')" >&2
   exit 2
 }
@@ -87,6 +93,7 @@ updates() {
 }
 
 rollback=0
+load_only=0
 pull=0
 update=""
 level=""
@@ -104,6 +111,11 @@ case "${1:-}" in
     [ -z "$level" ] || usage
     rollback=1
     ;;
+  --load)
+    [ $# -eq 1 ] || usage
+    [ -z "$level" ] || usage
+    load_only=1
+    ;;
   --update)
     shift
     if [ $# -eq 0 ]; then
@@ -119,6 +131,26 @@ case "${1:-}" in
   *) usage ;;
 esac
 
+# The targets of the template. others holds each sbx instance on the list of sbx-instance but the instance of this
+# folder, which plain sbx uses. With no sbx-instance, plain sbx is the one target.
+others=""
+if command -v sbx-instance >/dev/null 2>&1; then
+  instances=$(sbx-instance list) || {
+    echo "sbx-instance list fails: nothing is built" >&2
+    exit 1
+  }
+  here=$(sbx-instance which) || {
+    echo "sbx-instance which names no sbx instance for the folder of build.sh: nothing is built." \
+      "Put a .sbx-instance file into this folder or into a folder above it" >&2
+    exit 1
+  }
+  for name in $instances; do
+    [ "$name" = "$here" ] || others="$others $name"
+  done
+fi
+# A rollback over a major bump sets this to the newer major tag, which goes from each instance.
+stale_major=""
+
 # The version of this build: the level comes from --bump, or from an answer when stdin is a terminal. VERSION gets
 # the new version only after the check passes.
 old_version=$(cat VERSION 2>/dev/null || true)
@@ -127,7 +159,7 @@ is_version "$old_version" || {
   exit 1
 }
 version=$old_version
-if [ "$rollback" -eq 0 ]; then
+if [ "$rollback" -eq 0 ] && [ "$load_only" -eq 0 ]; then
   if [ -z "$level" ]; then
     if [ -t 0 ]; then
       level=$(ask_level "$old_version") || exit 1
@@ -285,6 +317,62 @@ drop_other_versions() {
   done
 }
 
+# load_into <instance> <version tag>: loads the saved image $tmp/others.tar into another sbx instance and removes
+# each other version tag there. A daemon that did not run before the load is stopped again, so a build leaves the
+# daemons as it found them.
+load_into() {
+  local name=$1 keep=$2 state list stale failed=0
+  state=$(sbx-instance run "$name" -- daemon status 2>/dev/null) || state=""
+  if sbx-instance run "$name" -- template load "$tmp/others.tar"; then
+    if list=$(sbx-instance run "$name" -- template ls --json |
+      jq -r '.[] | select(.repository | test("(^|/)sbx-stack-base$")) | .tag'); then
+      for stale in $list; do
+        if is_version "$stale" && [ "sbx-stack-base:$stale" != "$keep" ]; then
+          sbx-instance run "$name" -- template rm --force "sbx-stack-base:$stale" >/dev/null 2>&1 || true
+        fi
+      done
+      [ -z "$stale_major" ] ||
+        sbx-instance run "$name" -- template rm --force "$stale_major" >/dev/null 2>&1 || true
+    else
+      echo "cannot list the templates of the instance $name: an older version tag can stay there" >&2
+      failed=1
+    fi
+  else
+    failed=1
+  fi
+  if grep -Eq '^ *Status: +stopped' <<<"$state"; then
+    sbx-instance run "$name" -- daemon stop >/dev/null 2>&1 || true
+  fi
+  return "$failed"
+}
+
+# load_others <version tag> <tag>...: saves the image of the tags and loads it into each other sbx instance, one
+# after the other. A load that fails does not stop the next one: the function fails at its end and names the
+# instances that did not get the image.
+load_others() {
+  local keep=$1 name missing=""
+  shift
+  [ -n "$others" ] || return 0
+  if ! docker image save "$@" -o "$tmp/others.tar"; then
+    echo "cannot save $* for the other sbx instances:$others. Then run: build.sh --load" >&2
+    return 1
+  fi
+  for name in $others; do
+    if load_into "$name" "$keep"; then
+      echo "loaded $* into the instance $name"
+    else
+      echo "cannot load $* into the instance $name" >&2
+      missing="$missing $name"
+    fi
+  done
+  rm -f "$tmp/others.tar"
+  [ -z "$missing" ] || {
+    echo "the template is not in each sbx instance. Not loaded:$missing." \
+      "Repair the instance (sbx-instance check), then run: build.sh --load" >&2
+    return 1
+  }
+}
+
 if [ "$rollback" -eq 1 ]; then
   exists "$previous" || {
     echo "there is no $previous image to roll back to" >&2
@@ -309,8 +397,36 @@ if [ "$rollback" -eq 1 ]; then
   echo "$version" >VERSION
   move_good "$previous"
   echo "loaded the image that was good before the last one as $tag and $version_tag"
+  [ "$old_tag" = "$tag" ] || stale_major=$old_tag
+  others_failed=0
+  load_others "$version_tag" "$tag" "$version_tag" || others_failed=1
   finished=1
-  exit 0
+  exit "$others_failed"
+fi
+
+if [ "$load_only" -eq 1 ]; then
+  restore_good
+  exists "$good" || {
+    echo "there is no $good image to load: run build.sh with no --load first" >&2
+    exit 1
+  }
+  # The good image goes into sbx under its own version: its major tag and its version tag. VERSION stays.
+  version=$(version_of "$good") || version=""
+  is_version "$version" || {
+    echo "cannot read the version of $good: nothing is loaded" >&2
+    exit 1
+  }
+  tag=sbx-stack-base:${version%%.*}
+  version_tag=sbx-stack-base:$version
+  docker tag "$good" "$tag"
+  docker tag "$good" "$version_tag"
+  load "$tag" "$version_tag"
+  drop_other_versions "$version_tag"
+  echo "loaded the good image as $tag and $version_tag"
+  others_failed=0
+  load_others "$version_tag" "$tag" "$version_tag" || others_failed=1
+  finished=1
+  exit "$others_failed"
 fi
 
 restore_good
@@ -417,4 +533,8 @@ echo "the version is $version: the template is loaded as $tag and as $version_ta
 docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "size of %s: %.0f MB\n", "'"$tag"'", $1 / 1e6}'
 echo "what $tag holds (layer, name, version):"
 docker run --rm --entrypoint cat "$tag" /usr/local/share/sbx-stack/versions.txt
+# The other sbx instances come last: the image is good and VERSION holds its version, also when a load fails there.
+others_failed=0
+load_others "$version_tag" "$tag" "$version_tag" || others_failed=1
 finished=1
+[ "$others_failed" -eq 0 ] || exit 1

@@ -118,6 +118,7 @@ bash build.sh                     # updates nothing: only the layers whose files
 bash build.sh --update            # takes the newest version of everything, the Claude kit image included
 bash build.sh --update nvim yazi  # takes the newest versions for the named layers only
 bash build.sh --rollback          # loads the image that was good before the last one
+bash build.sh --load              # loads the good image into sbx again: no build and no check
 bash build.sh --bump minor        # as build.sh, and raises the version; goes before --update
 ```
 
@@ -138,6 +139,29 @@ Mac takes the newest version of everything, with or without `--update`.
 `build.sh --rollback` is for a bad image that the check did not catch. It loads `sbx-stack-base:previous`, the image
 that was good before the last one, under its two tags, and writes its version to `VERSION`. Only a passed check or
 a rollback moves `good`, so only an image that passed can become `previous`.
+
+### More than one sbx instance
+
+sbx can run separate instances, one for each Claude account (the repo `sbx-instances`, with its tool
+`sbx-instance`). Each instance has its own templates, so each one needs the image.
+
+- **With `sbx-instance` in `PATH`,** the targets of the template are the instances on its list. With no
+  `sbx-instance`, `build.sh` works with plain `sbx` only, as before. So this repo does not need the tool.
+- **The check runs in the instance of this folder.** `build.sh` calls plain `sbx` for the first load and for the
+  check. The `.sbx-instance` file above the repo names that instance. With the tool in `PATH` and no such file,
+  `build.sh` stops before the build.
+- **After a passed check,** each other instance gets the image with `sbx-instance run <name> -- template load`,
+  one after the other. `build.sh` removes each other version tag there too. No other instance gets an image that
+  failed the check.
+- **If a load into one instance fails,** `build.sh` names the instance, goes on with the next one, and exits 1 at
+  its end. The image is good and `VERSION` holds its version all the same. Repair the instance
+  (`sbx-instance check`), then run `build.sh --load`.
+- **`build.sh --load`** loads the good image into each instance again, under its two tags, and removes each other
+  version tag. It builds nothing and runs no check. Use it for a new instance and after a failed load.
+- **`build.sh --rollback`** loads the previous image into each instance.
+- **Daemons.** If the daemon of another instance did not run before its load, `build.sh` stops it again after the
+  load. So a build leaves the daemons as it found them.
+- **Disk.** Each instance holds its own copy of the template: about 4.2 GB for each.
 
 ### The version
 

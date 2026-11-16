@@ -183,10 +183,21 @@ a_copy() {
 copy_holds() { [ -f "$copy" ] && [ "$(cat "$copy")" = "$1" ]; }
 no_copy() { [ ! -e "$copy" ] && [ ! -e "$copy.new" ]; }
 
+# The PATH of a run has no sbx-instance of the person who runs the tests: a run has the tool only when its test
+# puts the stub into PATH.
+clean=""
+rest=$PATH:
+while [ -n "$rest" ]; do
+  dir=${rest%%:*}
+  rest=${rest#*:}
+  [ -n "$dir" ] && [ ! -e "$dir/sbx-instance" ] || continue
+  clean=${clean:+$clean:}$dir
+done
+
 # build <VAR=value>... -- <build.sh arguments>: runs build.sh with the stubs; sets rc, $calls and $out.
 # stdin is not a terminal, so build.sh asks nothing, also when a person runs these tests in a terminal.
 build() {
-  local envs=("PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" "XDG_STATE_HOME=$tmp/keep")
+  local envs=("PATH=$bin:$clean" "STUB_LOG=$calls" "STUB_STATE=$state" "XDG_STATE_HOME=$tmp/keep")
   while [ "$1" != -- ]; do
     envs+=("$1")
     shift
@@ -210,7 +221,7 @@ build_on_terminal() {
   echo "--- run" >>"$calls"
   rc=0
   typed "$answers" |
-    env "PATH=$bin:$PATH" "STUB_LOG=$calls" "STUB_STATE=$state" "XDG_STATE_HOME=$tmp/keep" SBX_STACK_CHECK=true \
+    env "PATH=$bin:$clean" "STUB_LOG=$calls" "STUB_STATE=$state" "XDG_STATE_HOME=$tmp/keep" SBX_STACK_CHECK=true \
       script -q /dev/null "$BASH" "$work/build.sh" "$@" >"$out" 2>&1 || rc=$?
 }
 
@@ -816,6 +827,213 @@ images "$tag" old "$good" old
 build SBX_STACK_CHECK=true "SBX_STACK_GOOD_COPY=$tmp/other.tar" --
 expect "no variable names another path: no file at that path" [ ! -e "$tmp/other.tar" ]
 expect "no variable names another path: the copy is at its one path" copy_holds "$(image_of "$good")"
+
+# The instances. With the tool sbx-instance in PATH, each sbx instance on its list is a target of the template. The
+# build, the first load and the check use plain sbx: the instance of the folder. Each other instance gets the image
+# after the check passed.
+# The stub of the tool: STUB_INSTANCES is its list ("fail" makes the list fail), "which" prints check, and
+# "run <name> -- ..." answers as sbx in that instance: STUB_STOPPED holds the instances whose daemon does not run,
+# STUB_LOAD_FAIL_IN the instances where a template load fails.
+ibin=$tmp/ibin
+mkdir -p "$ibin"
+cat >"$ibin/sbx-instance" <<'EOF'
+#!/usr/bin/env bash
+echo "sbx-instance $*" >>"$STUB_LOG"
+case "$1" in
+  list)
+    [ "${STUB_INSTANCES:-}" != fail ] || exit 1
+    # shellcheck disable=SC2086
+    printf '%s\n' $STUB_INSTANCES
+    ;;
+  which)
+    if [ -n "${STUB_WHICH_FAILS:-}" ]; then
+      echo "sbx-instances: no instance for the folder" >&2
+      exit 64
+    fi
+    echo check
+    ;;
+  run)
+    name=$2
+    shift 3
+    case "$1 ${2:-}" in
+      "daemon status")
+        case " ${STUB_STOPPED:-} " in
+          *" $name "*) echo "  Status:  stopped" ;;
+          *) echo "  Status:  ● running" ;;
+        esac
+        ;;
+      "template load")
+        case " ${STUB_LOAD_FAIL_IN:-} " in
+          *" $name "*)
+            echo "error: daemon fault" >&2
+            exit 1
+            ;;
+        esac
+        ;;
+      "template ls")
+        if [ -n "${STUB_TEMPLATES:-}" ]; then cat "$STUB_TEMPLATES"; else echo '[]'; fi
+        ;;
+    esac
+    ;;
+esac
+EOF
+chmod +x "$ibin/sbx-instance"
+# ibuild <VAR=value>... -- <build.sh arguments>: as build, with the tool in PATH and three instances on its list.
+ibuild() { build "PATH=$ibin:$bin:$clean" "STUB_INSTANCES=check alpha beta" "$@"; }
+# call_is <line>: a call of this run is this whole line.
+call_is() { this_run | grep -qxF -- "$1"; }
+# in_order <text> <text>: the last call with the first text comes before the first call with the second text.
+in_order() {
+  local first second
+  first=$(this_run | grep -nF -- "$1" | tail -1 | cut -d: -f1)
+  second=$(this_run | grep -nF -- "$2" | head -1 | cut -d: -f1)
+  [ -n "$first" ] && [ -n "$second" ] && [ "$first" -lt "$second" ]
+}
+
+fresh
+build SBX_STACK_CHECK=true --
+expect "no sbx-instance: exit 0" exit_is 0
+expect "no sbx-instance: no call of the tool" not_called "sbx-instance"
+expect "no sbx-instance: the two template loads of today" times 2 "sbx template load"
+
+fresh
+echo '[{"repository":"docker.io/library/sbx-stack-base","tag":"0"},
+{"repository":"docker.io/library/sbx-stack-base","tag":"0.1.8"},
+{"repository":"docker.io/library/sbx-stack-base","tag":"0.3.0"},
+{"repository":"docker.io/library/other-base","tag":"0.1.7"}]' >"$tmp/templates"
+ibuild SBX_STACK_CHECK=true "STUB_TEMPLATES=$tmp/templates" -- --bump minor
+expect "three instances: exit 0" exit_is 0
+expect "three instances: the check instance gets its two loads with plain sbx" times 2 "sbx template load"
+expect "three instances: the image goes into alpha" called "sbx-instance run alpha -- template load "
+expect "three instances: the image goes into beta" called "sbx-instance run beta -- template load "
+expect "three instances: no second load into the check instance" not_called "sbx-instance run check"
+expect "three instances: the other instances get the image after the loads of the check instance" \
+  in_order "sbx template load" "sbx-instance run"
+expect "three instances: the load into the other instances has both tags" called "docker image save $tag $next -o"
+expect "three instances: a stale version tag is gone from alpha" \
+  call_is "sbx-instance run alpha -- template rm --force sbx-stack-base:0.1.8"
+expect "three instances: a stale version tag is gone from beta" \
+  call_is "sbx-instance run beta -- template rm --force sbx-stack-base:0.1.8"
+expect "three instances: the new version tag stays in alpha" \
+  no_call "sbx-instance run alpha -- template rm --force $next"
+expect "three instances: the major tag stays in alpha" no_call "sbx-instance run alpha -- template rm --force $tag"
+expect "three instances: a template of another name stays in alpha" not_called "other-base"
+expect "three instances: the output names the instances" said "the instance alpha"
+expect "three instances: the version is the new one" version_is 0.3.0
+
+fresh
+ibuild SBX_STACK_CHECK=true STUB_INSTANCES=check --
+expect "only the check instance on the list: exit 0" exit_is 0
+expect "only the check instance on the list: no load into another instance" not_called "sbx-instance run"
+expect "only the check instance on the list: no extra save" times 2 "docker image save $tag"
+
+fresh
+ibuild SBX_STACK_CHECK=false --
+expect "three instances, the check fails: exit 1" exit_is 1
+expect "three instances, the check fails: no other instance gets the image" not_called "sbx-instance run"
+expect "three instances, the check fails: the check instance has the good image again" said "restored"
+expect "three instances, the check fails: the tag names the good image" is "$tag" old
+
+# A failed load into one instance must not pass without a word, and must not stop the loads into the others.
+fresh
+ibuild SBX_STACK_CHECK=true STUB_LOAD_FAIL_IN=alpha -- --bump minor
+expect "a failed load into alpha: exit 1" exit_is 1
+expect "a failed load into alpha: the output names the instance" said "the instance alpha"
+expect "a failed load into alpha: the output names the repair" said "build.sh --load"
+expect "a failed load into alpha: beta still gets the image" called "sbx-instance run beta -- template load "
+expect "a failed load into alpha: no version tag is removed in alpha" not_called "sbx-instance run alpha -- template ls"
+expect "a failed load into alpha: the version is the new one" version_is 0.3.0
+expect "a failed load into alpha: the new image is the good one" is_new "$good"
+expect "a failed load into alpha: no line about a stop before the end" not_said "stopped before its end"
+
+fresh
+ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha --
+expect "a daemon that was stopped: exit 0" exit_is 0
+expect "a daemon that was stopped is stopped again" call_is "sbx-instance run alpha -- daemon stop"
+expect "a daemon that was stopped: the stop comes after the load" \
+  in_order "sbx-instance run alpha -- template load" "sbx-instance run alpha -- daemon stop"
+expect "a daemon that ran is not stopped" not_called "sbx-instance run beta -- daemon stop"
+fresh
+ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha STUB_LOAD_FAIL_IN=alpha --
+expect "a daemon that was stopped, and the load fails: it is stopped again" \
+  call_is "sbx-instance run alpha -- daemon stop"
+
+# --load: the good image goes into each target again. No build, no check.
+fresh
+images "$tag" bad "$vtag" old "$good" old "$previous" older
+ibuild SBX_STACK_CHECK=false STUB_VERSION=0.2.0 -- --load
+expect "--load: exit 0" exit_is 0
+expect "--load: no build" not_called "docker build"
+expect "--load: the major tag names the good image" is "$tag" old
+expect "--load: one load into the check instance, with both tags" times 1 "sbx template load"
+expect "--load: the save has both tags" called "docker image save $tag $vtag -o"
+expect "--load: the image goes into alpha" called "sbx-instance run alpha -- template load "
+expect "--load: the image goes into beta" called "sbx-instance run beta -- template load "
+expect "--load: VERSION is unchanged" version_is 0.2.0
+expect "--load: the good image is unchanged" is "$good" old
+expect "--load: previous is unchanged" is "$previous" older
+fresh
+build STUB_VERSION=0.2.0 -- --load
+expect "--load with no sbx-instance: exit 0" exit_is 0
+expect "--load with no sbx-instance: one load with plain sbx" times 1 "sbx template load"
+fresh
+ibuild STUB_VERSION=0.2.0 STUB_LOAD_FAIL_IN=beta -- --load
+expect "--load, a failed load into beta: exit 1" exit_is 1
+expect "--load, a failed load into beta: the output names the instance" said "the instance beta"
+expect "--load, a failed load into beta: alpha gets the image" called "sbx-instance run alpha -- template load "
+images
+a_copy kept
+ibuild STUB_VERSION=0.2.0 -- --load
+expect "--load, no good image, a copy: the copy is loaded first" called "docker image load -i $copy"
+expect "--load, no good image, a copy: the major tag names the restored image" is "$tag" kept
+expect "--load, no good image, a copy: the image goes into alpha" called "sbx-instance run alpha -- template load "
+images
+ibuild -- --load
+expect "--load, no good image, no copy: exit 1" exit_is 1
+expect "--load, no good image, no copy: says so" said "no $good image"
+expect "--load, no good image, no copy: no load" not_called "template load"
+fresh
+ibuild -- --load --update
+expect "--load with --update: the usage" exit_is 2
+ibuild -- --bump minor --load
+expect "--load with --bump: the usage" exit_is 2
+ibuild -- --load --rollback
+expect "--load with --rollback: the usage" exit_is 2
+expect "--load with another option: nothing ran" not_called "template load"
+
+# The rollback goes into each target.
+set_version 0.3.0
+images "$tag" bad "$next" bad "$good" bad "$previous" old
+ibuild STUB_VERSION=0.2.0 -- --rollback
+expect "rollback, three instances: exit 0" exit_is 0
+expect "rollback, three instances: the previous image goes into alpha" called "sbx-instance run alpha -- template load "
+expect "rollback, three instances: the previous image goes into beta" called "sbx-instance run beta -- template load "
+expect "rollback, three instances: VERSION is the version of the previous image" version_is 0.2.0
+set_version 1.0.0
+images sbx-stack-base:1 bad sbx-stack-base:1.0.0 bad "$good" bad "$previous" old
+ibuild STUB_VERSION=0.2.0 -- --rollback
+expect "rollback over a major bump: the newer major tag is gone from alpha" \
+  call_is "sbx-instance run alpha -- template rm --force sbx-stack-base:1"
+expect "rollback over a major bump: the newer major tag is gone from beta" \
+  call_is "sbx-instance run beta -- template rm --force sbx-stack-base:1"
+set_version 0.3.0
+images "$tag" bad "$next" bad "$good" bad "$previous" old
+ibuild STUB_VERSION=0.2.0 STUB_LOAD_FAIL_IN=alpha -- --rollback
+expect "rollback, a failed load into alpha: exit 1" exit_is 1
+expect "rollback, a failed load into alpha: the output names the repair" said "build.sh --load"
+expect "rollback, a failed load into alpha: the previous image is the good one" is "$good" old
+
+# A tool that cannot name the instances stops the build before it starts.
+fresh
+ibuild SBX_STACK_CHECK=true STUB_INSTANCES=fail --
+expect "sbx-instance list fails: exit 1" exit_is 1
+expect "sbx-instance list fails: says so" said "sbx-instance list"
+expect "sbx-instance list fails: no build" not_called "docker build"
+ibuild SBX_STACK_CHECK=true STUB_WHICH_FAILS=1 --
+expect "the folder has no instance: exit 1" exit_is 1
+expect "the folder has no instance: says so" said "sbx-instance which"
+expect "the folder has no instance: no build" not_called "docker build"
+expect "the folder has no instance: no template load" not_called "template load"
 
 [ "$fails" -eq 0 ] || {
   echo "$fails failed"
