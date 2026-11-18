@@ -4,17 +4,16 @@
 # this script locates it, pipes the payload in once, and renders the JSON
 # verdict it prints. The engine also logs the rolling usage sample.
 #
-# In a sandbox (IS_SANDBOX is set and not empty) the status has the sandbox form: the first chip names the sbx
-# instance and the sandbox, and each row is on a color band that goes to the right edge of the terminal. Else the
-# output is the output for the Mac.
+# In a sandbox (IS_SANDBOX is set and not empty) the status has the sandbox form: each row starts with a colored
+# stripe, and the first chip is a pill in the same color that names the sbx instance and the sandbox. Each instance
+# has its own color. The rest of each row is the row of the Mac. Else the output is the output for the Mac.
 input=$(cat)
 
-# The sandbox form.
-BAND='48;2;18;60;140'      # the background of the band: a dark blue
-TEXT='38;2;235;238;245'    # plain text on the band; the foreground of the terminal can be dark
-DIM_TEXT='38;2;200;205;215' # text that is dim outside a sandbox; dim text is hard to read on the band
-MARGIN=2                   # columns that stay free at the right: a terminal can draw an emoji wider than the count
-FILL=' '                   # fills a row to the right. If Claude Code drops the spaces at the end of a row: U+2800
+# The colors of the sandbox form, as 24-bit RGB. An instance gets the color PALETTE[sum of the bytes of its name
+# modulo the size of PALETTE]: teal, amber, violet, rose, sky, lime. Two instances can get the same color.
+PALETTE=('45;170;160' '230;165;40' '155;115;215' '215;95;125' '80;150;225' '150;190;70')
+GRAY='120;120;125'     # a sandbox with no label
+PILL_TEXT='20;20;20'   # the text on the pill
 
 MODEL=$(echo "$input" | jq -r '.model.display_name')
 DIR=$(echo "$input" | jq -r '.workspace.current_dir')
@@ -28,15 +27,36 @@ SID_SHORT="${SID:0:8}"
 SNAME=$(echo "$input" | jq -r '.session_name // empty')
 
 CYAN='\033[36m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
-MAGENTA='\033[35m'; DIM='\033[2m'; BOLD='\033[1m'
+MAGENTA='\033[35m'; DIM='\033[2m'
 
 # The first chip. On the Mac: the current Claude profile (from CLAUDE_CONFIG_DIR; "default" when unset or
 # ~/.claude). In a sandbox: the sbx instance and the sandbox. sbx gives a VM no trace of its instance, so the name
 # comes from the label of the instance (SBX_INSTANCE, set by "sbx-instance add" of the repo sbx-instances). "?" means
 # that the instance has no label, or that the sandbox is older than the label.
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+# instance_color <name>: prints the color of an instance; GRAY for no name or "?".
+instance_color() {
+  local name=$1 sum=0 i code
+  case "$name" in
+    '' | '?')
+      printf '%s' "$GRAY"
+      return
+      ;;
+  esac
+  for ((i = 0; i < ${#name}; i++)); do
+    printf -v code '%d' "'${name:i:1}"
+    sum=$((sum + code))
+  done
+  printf '%s' "${PALETTE[sum % ${#PALETTE[@]}]}"
+}
+
+STRIPE=""
 if [ -n "${IS_SANDBOX:-}" ]; then
-  CHIP="${BOLD}📦 ${SBX_INSTANCE:-?} · ${SANDBOX_NAME:-sandbox}${RESET}"
+  INSTANCE="${SBX_INSTANCE:-?}"
+  COLOR=$(instance_color "$INSTANCE")
+  STRIPE="\033[38;2;${COLOR}m▌${RESET} "
+  CHIP="\033[1;38;2;${PILL_TEXT};48;2;${COLOR}m 📦 ${INSTANCE} · ${SANDBOX_NAME:-sandbox} ${RESET}"
 elif [ "$CONFIG_DIR" = "$HOME/.claude" ]; then
   CHIP="${DIM}👤 default${RESET}"
 else
@@ -151,78 +171,11 @@ STYLE_CHIP=""
 MODEL_CHIP="${CYAN}[$MODEL]${RESET}"
 [ -n "$EFFORT" ] && MODEL_CHIP="${CYAN}[$MODEL${RESET}${DIM} · ${EFFORT}${RESET}${CYAN}]${RESET}"
 
-# The visible width of each row: reads the rows from stdin, each with a NUL byte after it, and prints one number
-# for each row. A color code counts 0, a wide character (most emoji, CJK) counts 2, a character before the variation
-# selector U+FE0F counts 2, the selector and a combining character count 0, each other character counts 1.
-# It runs with "python3 -I": the status line runs in the folder of a project, and with no -I a file there with the
-# name of a module (re.py) is code that python runs.
-WIDTH_PROGRAM='
-import re
-import sys
-import unicodedata
-
-SELECTOR = chr(0xFE0F)
-for row in sys.stdin.buffer.read().decode("utf-8", "replace").split(chr(0))[:-1]:
-    row = re.sub(chr(27) + r"\[[0-9;]*m", "", row)
-    width = 0
-    for at, char in enumerate(row):
-        if char == SELECTOR or unicodedata.combining(char):
-            continue
-        wide = unicodedata.east_asian_width(char) in ("W", "F") or row[at + 1 : at + 2] == SELECTOR
-        width += 2 if wide else 1
-    print(width)
-'
-
-# band_rows <row>...: prints the rows in the sandbox form. Each row is on the band: the band and the text color
-# come first and again after each color reset, and dim text gets DIM_TEXT. When COLUMNS is a number and python3
-# gives the widths, a row that is not wider than COLUMNS less MARGIN is filled to that width. Else the band is
-# behind the text only. No row is cut.
-band_rows() {
-  local esc=$'\033' on reset dim light again row width pad limit="" i
-  local rows=() widths=()
-  on="${esc}[${BAND}m${esc}[${TEXT}m"
-  reset="${esc}[0m"
-  dim="${esc}[2m"
-  light="${esc}[${DIM_TEXT}m"
-  again=$reset$on
-  for row in "$@"; do
-    row=$(echo -e "$row")
-    row=${row//"$dim"/$light}
-    row=${row//"$reset"/$again}
-    rows[${#rows[@]}]=$on$row
-  done
-  case "${COLUMNS:-}" in
-    '' | *[!0-9]* | ?????*) ;;
-    *) limit=$((10#$COLUMNS - MARGIN)) ;;
-  esac
-  if [ -n "$limit" ]; then
-    while IFS= read -r width; do
-      widths[${#widths[@]}]=$width
-    done < <(printf '%s\0' "${rows[@]}" | python3 -I -c "$WIDTH_PROGRAM" 2>/dev/null)
-    [ "${#widths[@]}" -eq "${#rows[@]}" ] || limit=""
-  fi
-  for i in "${!rows[@]}"; do
-    pad=""
-    if [ -n "$limit" ] && [ "${widths[i]}" -le "$limit" ] 2>/dev/null; then
-      printf -v pad '%*s' "$((limit - widths[i]))" ''
-      pad=${pad// /$FILL}
-    fi
-    printf '%s%s%s\n' "${rows[i]}" "$pad" "$reset"
-  done
-}
-
 COST_FMT=$(printf '$%.2f' "$COST")
 QUOTA_CHIP=""
 [ -n "$RIGHT_DISPLAY" ] && QUOTA_CHIP=" | ${RIGHT_DISPLAY}"
 
-# Row 1: identity + output style. Row 2: dir/branch chip. Row 3: metrics.
-ROW1="${CHIP}${SID_DISPLAY} | ${MODEL_CHIP}${STYLE_CHIP}"
-ROW2="📁 ${DIR##*/}${BRANCH}"
-ROW3="${BAR_COLOR}${BAR}${RESET} ${CTX_K}k${CTX_HINT} | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${MINS}m${SECS}s${QUOTA_CHIP}"
-if [ -n "${IS_SANDBOX:-}" ]; then
-  band_rows "$ROW1" "$ROW2" "$ROW3"
-else
-  echo -e "$ROW1"
-  echo -e "$ROW2"
-  echo -e "$ROW3"
-fi
+# Line 1: identity + output style. Line 2: dir/branch chip. Line 3: metrics. STRIPE is empty outside a sandbox.
+echo -e "${STRIPE}${CHIP}${SID_DISPLAY} | ${MODEL_CHIP}${STYLE_CHIP}"
+echo -e "${STRIPE}📁 ${DIR##*/}${BRANCH}"
+echo -e "${STRIPE}${BAR_COLOR}${BAR}${RESET} ${CTX_K}k${CTX_HINT} | ${YELLOW}${COST_FMT}${RESET} | ⏱️ ${MINS}m${SECS}s${QUOTA_CHIP}"

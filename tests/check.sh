@@ -142,9 +142,9 @@ assertions() {
     && { echo '{}' | SANDBOX_NAME=$name $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-hijack"
   # IS_SANDBOX and SANDBOX_NAME are the real variables of the VM. The label of the instance is given here: the
   # instance of a check can have none.
-  check "the statusline draws the sandbox chip and the band$suffix" \
-    "echo '{}' | SBX_INSTANCE=probe COLUMNS=100 $share/claude/statusline | grep -c '📦 probe · $name' | grep -qx 1 \
-    && echo '{}' | COLUMNS=100 $share/claude/statusline | head -1 | grep -q '48;2;18;60;140'"
+  check "the statusline draws the sandbox pill and the stripe$suffix" \
+    "echo '{}' | SBX_INSTANCE=probe $share/claude/statusline | grep -c '📦 probe · $name' | grep -qx 1 \
+    && echo '{}' | $share/claude/statusline | grep -c '▌' | grep -qx 3"
   check "the statusline runs no python module from the current folder$suffix" \
     "d=\$(mktemp -d) && cd \$d && echo 'open(\"/tmp/statusline-module-hijack\", \"w\")' > re.py && cp re.py unicodedata.py \
     && { echo '{}' | COLUMNS=100 $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-module-hijack"

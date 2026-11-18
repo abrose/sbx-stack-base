@@ -24,11 +24,21 @@ done
 # The interpreter itself: a python3 in PATH can be a shim script that needs more than this PATH holds.
 ln -s "$(python3 -c 'import sys; print(sys.executable)')" "$bin/python3"
 
-# The constants of the script.
-band=$'\033[48;2;18;60;140m'
-light=$'\033[38;2;235;238;245m'
-fill=' '
+# The constants of the script: the colors of the instances, and gray for a sandbox with no label.
+palette=("45;170;160" "230;165;40" "155;115;215" "215;95;125" "80;150;225" "150;190;70")
+gray="120;120;125"
 reset=$'\033[0m'
+dim=$'\033[2m'
+# color_of <instance>: the color of the instance. The rule: the sum of the bytes of the name, modulo the size of
+# the palette. Counted here with python, apart from the count of the script.
+color_of() {
+  case "$1" in
+    '' | '?') echo "$gray" ;;
+    *) echo "${palette[$(python3 -c 'import sys; print(sum(sys.argv[1].encode()) % 6)' "$1")]}" ;;
+  esac
+}
+stripe_of() { printf '\033[38;2;%sm▌\033[0m ' "$1"; }
+pill_of() { printf '\033[1;38;2;20;20;20;48;2;%sm' "$1"; }
 
 # input_json <session name>: the payload that Claude Code gives a status line.
 input_json() {
@@ -40,12 +50,13 @@ input_json() {
 EOF
 }
 input_json fix-login >"$tmp/input.json"
-input_json 日本語 >"$tmp/wide.json"
 input=$tmp/input.json
 path=$bin
 
-# A quota engine that gives a verdict for both windows.
+# A quota engine that gives a verdict for both windows. It imports a standard module, so a module of the same name
+# in the working folder would run if python looked there.
 cat >"$tmp/engine" <<'EOF'
+import re
 print('{"5h": {"severity": "ok", "info": "3h", "used_pct": 42}, "7d": {"severity": "ok", "info": "5d", "used_pct": 18}}')
 EOF
 
@@ -73,6 +84,9 @@ row() { sed -n "${1}p" "$out"; }
 rows_are() { [ "$(wc -l <"$out" | tr -d ' ')" -eq "$1" ] && [ "$rc" -eq 0 ]; }
 said() { grep -qF -- "$1" "$out"; }
 same_bytes() { cmp -s "$1" "$2"; }
+keep() { cp "$out" "$tmp/$1"; }
+row_has() { [[ "$(row "$1")" == *"$2"* ]]; }
+starts_with() { [[ "$(row "$2")" == "$1"* ]]; }
 # each_row <test> [argument...]: the test holds for each of the three rows. The row number is the last argument.
 each_row() {
   local n
@@ -80,40 +94,26 @@ each_row() {
     "$@" "$n" || return 1
   done
 }
-row_has() { [[ "$(row "$1")" == *"$2"* ]]; }
-starts_with() { [[ "$(row "$2")" == "$1"* ]]; }
-ends_with() { [[ "$(row "$2")" == *"$1" ]]; }
-# ends_with_fill <n>: the row has fill characters before its last reset.
-ends_with_fill() { [[ "$(row "$1")" == *"$fill$reset" ]]; }
-# no_reset_without_band <n>: after each reset in the row but the last one, the band and its text color are set
-# again.
-no_reset_without_band() {
-  local text
-  text=$(row "$1")
-  text=${text%"$reset"}
-  text=${text//"$reset$band$light"/}
-  [[ "$text" != *"$reset"* ]]
+# chip_is <instance> <sandbox>: row 1 starts with the stripe and the pill in the color of the instance.
+chip_is() {
+  local c
+  c=$(color_of "$1")
+  starts_with "$(stripe_of "$c")$(pill_of "$c") 📦 $1 · $2 $reset" 1
 }
-# width <n>: the visible width of the row. This count is apart from the count of the script: a color code counts 0,
-# a character with East Asian width W or F counts 2, a character before U+FE0F counts 2, U+FE0F and a combining
-# character count 0, each other character counts 1.
-cat >"$tmp/width.py" <<'EOF'
-import re
-import sys
-import unicodedata
-
-text = re.sub("\033\\[[0-9;]*m", "", sys.stdin.buffer.read().decode("utf-8").rstrip("\n"))
-total = 0
-VS16 = chr(0xFE0F)
-for at, char in enumerate(text):
-    if char == VS16 or unicodedata.combining(char):
-        continue
-    after = text[at + 1 : at + 2]
-    total += 2 if unicodedata.east_asian_width(char) in ("W", "F") or after == VS16 else 1
-print(total)
-EOF
-width() { row "$1" | python3 "$tmp/width.py"; }
-width_is() { [ "$(width "$2")" -eq "$1" ]; }
+# as_on_the_mac <n>: row n is the row n of the Mac after the stripe. For row 1 the chips differ, so the part after
+# the chip is compared.
+as_on_the_mac() {
+  local n=$1 c mac text
+  c=$(color_of inst)
+  mac=$(sed -n "${n}p" "$expected")
+  text=$(row "$n")
+  text=${text#"$(stripe_of "$c")"}
+  if [ "$n" -eq 1 ]; then
+    text=${text#"$(pill_of "$c") 📦 inst · box $reset"}
+    mac=${mac#"${dim}👤 default${reset}"}
+  fi
+  [ "$text" = "$mac" ]
+}
 
 sandbox=(IS_SANDBOX=1 SANDBOX_NAME=box SBX_INSTANCE=inst)
 
@@ -134,85 +134,54 @@ expect "IS_SANDBOX is empty: the output of today" same_bytes "$out" "$expected"
 
 echo "== in a sandbox"
 draw "${sandbox[@]}" COLUMNS=120
-expect "sandbox: three rows" rows_are 3
-expect "sandbox: the chip names instance and sandbox" row_has 1 "📦 inst · box"
+keep sandbox.out
+expect "sandbox: three rows, exit 0" rows_are 3
+expect "sandbox: each row starts with the stripe in the color of the instance" \
+  each_row starts_with "$(stripe_of "$(color_of inst)")"
+expect "sandbox: the pill names instance and sandbox, in the color of the instance" chip_is inst box
 expect "sandbox: no profile chip" not said "👤"
-expect "sandbox: each row starts with the band" each_row starts_with "$band"
-expect "sandbox: plain text is light on the band" each_row starts_with "$band$light"
-expect "sandbox: each row has the width COLUMNS less the margin" each_row width_is 118
-expect "sandbox: the band is set again after each reset in a row" each_row no_reset_without_band
-expect "sandbox: each row ends with a reset" each_row ends_with "$reset"
-expect "sandbox: each row is filled" each_row ends_with_fill
-expect "sandbox: no dim text on the band" not said $'\033[2m'
-expect "sandbox: the session name stays" row_has 1 "fix-login"
-expect "sandbox: the folder stays" row_has 2 "📁 app"
-expect "sandbox: the cost stays" row_has 3 "\$1.42"
+expect "sandbox: row 1 after the chip is the row of the Mac" as_on_the_mac 1
+expect "sandbox: row 2 after the stripe is the row of the Mac" as_on_the_mac 2
+expect "sandbox: row 3 after the stripe is the row of the Mac" as_on_the_mac 3
+
+echo "== the color of an instance"
+for name in alpha beta gamma delta epsilon zeta default check; do
+  draw IS_SANDBOX=1 SANDBOX_NAME=box "SBX_INSTANCE=$name"
+  expect "the instance $name has its color" chip_is "$name" box
+done
+expect "the palette gives the instances different colors" \
+  [ "$(for n in alpha beta gamma delta epsilon zeta; do color_of "$n"; done | sort -u | wc -l | tr -d ' ')" -gt 3 ]
 
 echo "== the label"
-draw IS_SANDBOX=1 SANDBOX_NAME=box COLUMNS=120
-expect "no label: the chip shows ?" row_has 1 "📦 ? · box"
-draw IS_SANDBOX=1 SANDBOX_NAME=box SBX_INSTANCE= COLUMNS=120
-expect "an empty label: the chip shows ?" row_has 1 "📦 ? · box"
-draw IS_SANDBOX=1 SBX_INSTANCE=inst COLUMNS=120
-expect "no sandbox name: the chip says sandbox" row_has 1 "📦 inst · sandbox"
+draw IS_SANDBOX=1 SANDBOX_NAME=box
+expect "no label: a gray pill with ?" chip_is "?" box
+draw IS_SANDBOX=1 SANDBOX_NAME=box SBX_INSTANCE=
+expect "an empty label: a gray pill with ?" chip_is "?" box
+draw IS_SANDBOX=1 SBX_INSTANCE=inst
+expect "no sandbox name: the pill says sandbox" chip_is inst sandbox
 
-echo "== the width"
-draw "${sandbox[@]}"
-expect "no COLUMNS: three rows" rows_are 3
-expect "no COLUMNS: not filled" each_row not ends_with_fill
-expect "no COLUMNS: the band is behind the text" each_row starts_with "$band"
-draw "${sandbox[@]}" COLUMNS=abc
-expect "COLUMNS is no number: three rows" rows_are 3
-expect "COLUMNS is no number: not filled" each_row not ends_with_fill
-draw "${sandbox[@]}" COLUMNS=20
-expect "a narrow terminal: three rows" rows_are 3
-expect "a narrow terminal: row 1 is too wide, so it is not filled" not ends_with_fill 1
-expect "a narrow terminal: row 3 is too wide, so it is not filled" not ends_with_fill 3
-expect "a narrow terminal: not cut" row_has 3 '12m3s'
-expect "a narrow terminal: the short row is filled to the width" width_is 18 2
-draw "${sandbox[@]}" COLUMNS=200
-expect "a wide terminal: each row has the width 198" each_row width_is 198
-draw "${sandbox[@]}" COLUMNS=0120
-expect "COLUMNS with a zero in front is a decimal number" each_row width_is 118
-draw "${sandbox[@]}" COLUMNS=99999999999999999999
-expect "COLUMNS is too large for a width: three rows" rows_are 3
-expect "COLUMNS is too large for a width: not filled" each_row not ends_with_fill
-input=$tmp/wide.json
-draw "${sandbox[@]}" COLUMNS=120
-expect "a wide character: the name is in the row" row_has 1 "日本語"
-expect "a wide character counts two columns" each_row width_is 118
-input=$tmp/input.json
+echo "== the width does not count"
+for columns in "" abc 20 200; do
+  draw "${sandbox[@]}" "COLUMNS=$columns"
+  expect "COLUMNS=$columns: the same rows as with 120" same_bytes "$out" "$tmp/sandbox.out"
+done
 
 echo "== the quota bars"
-draw "${sandbox[@]}" COLUMNS=160 "QUOTA_ENGINE=$tmp/engine"
+draw "${sandbox[@]}" "QUOTA_ENGINE=$tmp/engine"
 expect "the quota bars keep their colors" said $'\033[38;2;240;240;240;48;2;35;165;75m'
-expect "with quota bars: the width is right" each_row width_is 158
-expect "with quota bars: the band is set again after each reset" each_row no_reset_without_band
+expect "with quota bars: each row starts with the stripe" each_row starts_with "$(stripe_of "$(color_of inst)")"
 
 echo "== no code from the working folder"
 # The status line runs in the folder of a project. A file there with the name of a python module must not run.
-for module in re unicodedata; do
-  echo "open('$tmp/hijack', 'w')" >"$work/$module.py"
-done
-draw "${sandbox[@]}" COLUMNS=120
+echo "open('$tmp/hijack', 'w')" >"$work/re.py"
+draw "${sandbox[@]}" "QUOTA_ENGINE=$tmp/engine"
 expect "a python module in the working folder does not run" [ ! -e "$tmp/hijack" ]
-expect "a python module in the working folder: the rows are filled" each_row width_is 118
-rm -f "$work"/*.py "$tmp/hijack"
-mkdir "$tmp/modules"
-echo "open('$tmp/hijack', 'w')" >"$tmp/modules/re.py"
-draw "${sandbox[@]}" COLUMNS=120 "PYTHONPATH=$tmp/modules"
-expect "a python module of PYTHONPATH does not run" [ ! -e "$tmp/hijack" ]
-rm -f "$tmp/hijack"
+rm -f "$work/re.py" "$tmp/hijack"
 
 echo "== no python3"
 path=$nopy
 draw "${sandbox[@]}" COLUMNS=120
-expect "no python3: three rows, exit 0" rows_are 3
-expect "no python3: the chip" row_has 1 "📦 inst · box"
-expect "no python3: the band is behind the text" each_row starts_with "$band"
-expect "no python3: the band is set again after each reset" each_row no_reset_without_band
-expect "no python3: each row ends with a reset" each_row ends_with "$reset"
-expect "no python3: not filled" each_row not ends_with_fill
+expect "no python3: the same rows" same_bytes "$out" "$tmp/sandbox.out"
 draw
 expect "no python3, not in a sandbox: the output of today" same_bytes "$out" "$expected"
 path=$bin
