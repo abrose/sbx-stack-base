@@ -154,6 +154,8 @@ MODEL_CHIP="${CYAN}[$MODEL]${RESET}"
 # The visible width of each row: reads the rows from stdin, each with a NUL byte after it, and prints one number
 # for each row. A color code counts 0, a wide character (most emoji, CJK) counts 2, a character before the variation
 # selector U+FE0F counts 2, the selector and a combining character count 0, each other character counts 1.
+# It runs with "python3 -I": the status line runs in the folder of a project, and with no -I a file there with the
+# name of a module (re.py) is code that python runs.
 WIDTH_PROGRAM='
 import re
 import sys
@@ -196,7 +198,7 @@ band_rows() {
   if [ -n "$limit" ]; then
     while IFS= read -r width; do
       widths[${#widths[@]}]=$width
-    done < <(printf '%s\0' "${rows[@]}" | python3 -c "$WIDTH_PROGRAM" 2>/dev/null)
+    done < <(printf '%s\0' "${rows[@]}" | python3 -I -c "$WIDTH_PROGRAM" 2>/dev/null)
     [ "${#widths[@]}" -eq "${#rows[@]}" ] || limit=""
   fi
   for i in "${!rows[@]}"; do

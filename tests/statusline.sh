@@ -189,6 +189,21 @@ expect "the quota bars keep their colors" said $'\033[38;2;240;240;240;48;2;35;1
 expect "with quota bars: the width is right" each_row width_is 158
 expect "with quota bars: the band is set again after each reset" each_row no_reset_without_band
 
+echo "== no code from the working folder"
+# The status line runs in the folder of a project. A file there with the name of a python module must not run.
+for module in re unicodedata; do
+  echo "open('$tmp/hijack', 'w')" >"$work/$module.py"
+done
+draw "${sandbox[@]}" COLUMNS=120
+expect "a python module in the working folder does not run" [ ! -e "$tmp/hijack" ]
+expect "a python module in the working folder: the rows are filled" each_row width_is 118
+rm -f "$work"/*.py "$tmp/hijack"
+mkdir "$tmp/modules"
+echo "open('$tmp/hijack', 'w')" >"$tmp/modules/re.py"
+draw "${sandbox[@]}" COLUMNS=120 "PYTHONPATH=$tmp/modules"
+expect "a python module of PYTHONPATH does not run" [ ! -e "$tmp/hijack" ]
+rm -f "$tmp/hijack"
+
 echo "== no python3"
 path=$nopy
 draw "${sandbox[@]}" COLUMNS=120
