@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Claude statusline in the VM. Sends the payload to the sbx hook first: sbx's own statusline, which reports
-# session info to Docker Desktop and prints nothing. Then draws the owner's statusline.sh. CLAUDE_CONFIG_DIR is
-# only for its profile chip, which then shows the sandbox name. It must be absolute and outside the workspace:
-# statusline.sh looks for the quota engine below it first, then in the abrose-plugins marketplace clone in ~/.claude.
+# session info to Docker Desktop and prints nothing. Then draws the owner's statusline.sh, which has the sandbox
+# form in a VM (IS_SANDBOX). CLAUDE_CONFIG_DIR is the first place where statusline.sh looks for the quota engine,
+# then the abrose-plugins marketplace clone in ~/.claude. So it must be absolute and outside the workspace: a
+# folder of the workspace must never give the engine.
 set -euo pipefail
 
 input=$(cat)

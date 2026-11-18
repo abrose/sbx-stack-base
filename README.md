@@ -355,6 +355,24 @@ commit of a repo), `record` (a line in `versions.txt`) and `as_agent` (a command
 The `nvim` build installs the plugins with lazy.nvim and then runs `verify.lua` through `run-lua`. The build fails
 when a plugin, a parser or the matcher is missing. Keep Neovim at 0.12 or newer: blink.cmp's main branch needs it.
 
+### The status line of a sandbox
+
+`layers/claude/statusline.sh` is one script for the Mac and for a sandbox. In a sandbox (`IS_SANDBOX` is set and
+not empty) it draws the sandbox form. You see at one look that a session runs in a sandbox, and in which instance:
+
+- **The chip.** The first chip is `📦 <instance> · <sandbox>`, in the place of the profile chip `👤`. `<instance>`
+  is the variable `SBX_INSTANCE`. sbx gives a VM no trace of its instance: the name comes from the label that
+  `sbx-instance add` of the repo `sbx-instances` sets for an instance. The chip shows `?` when the instance has no
+  label, or when the sandbox is older than the label. A sandbox gets the label at its create only.
+- **The band.** Each row is on a dark blue band that goes to the right edge of the terminal, less a margin. Claude
+  Code gives the width as `COLUMNS`, and `python3` counts the width of a row. With no `COLUMNS`, with no `python3`,
+  or for a row that is wider than the terminal, the band is behind the text only. No row is cut.
+- **The constants** are at the top of the script: `BAND` (the color), `TEXT` and `DIM_TEXT` (the text colors on the
+  band), `MARGIN` and `FILL` (the fill character). `tests/statusline.sh` holds the same values.
+
+Outside a sandbox the output does not change: `tests/statusline.expected` holds it for a fixed input, byte for
+byte. After a wanted change of that output, write the file new: `STATUSLINE_PIN=1 bash tests/statusline.sh`.
+
 ### Add a layer
 
 1. Make `layers/<name>/install.sh`, executable, with `set -euo pipefail`. Put the layer's config files beside it.
@@ -384,6 +402,7 @@ when a plugin, a parser or the matcher is missing. Keep Neovim at 0.12 or newer:
 ```bash
 bash tests/seed.sh      # static checks of the repo files, no Docker
 bash tests/build.sh     # unit tests of build.sh; docker and sbx are stubs
+bash tests/statusline.sh  # unit tests of the statusline, on the Mac; needs jq, git and python3
 bash tests/check.sh     # creates the sandbox check-base from the loaded template, asserts, removes it
 ```
 
@@ -402,4 +421,5 @@ stop and start.
 | `layers/<name>/` | one layer: `install.sh`, optional build scripts, and its files |
 | `tests/seed.sh` | static checks of the files |
 | `tests/build.sh` | unit tests of `build.sh` |
+| `tests/statusline.sh`, `tests/statusline.expected` | unit tests of `layers/claude/statusline.sh`, and its output outside a sandbox |
 | `tests/check.sh`, `tests/sbxenv.yaml` | the check in a sandbox from the template, and its project file |

@@ -140,6 +140,11 @@ assertions() {
     "d=\$(mktemp -d) && cd \$d && e=sbx/$name/plugins/marketplaces/abrose-plugins/plugins/quota-statusline/bin && mkdir -p \$e \
     && echo 'open(\"/tmp/statusline-hijack\", \"w\")' > \$e/quota-statusline \
     && { echo '{}' | SANDBOX_NAME=$name $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-hijack"
+  # IS_SANDBOX and SANDBOX_NAME are the real variables of the VM. The label of the instance is given here: the
+  # instance of a check can have none.
+  check "the statusline draws the sandbox chip and the band$suffix" \
+    "echo '{}' | SBX_INSTANCE=probe COLUMNS=100 $share/claude/statusline | grep -c '📦 probe · $name' | grep -qx 1 \
+    && echo '{}' | COLUMNS=100 $share/claude/statusline | head -1 | grep -q '48;2;18;60;140'"
   for t in $recorded $plugins; do
     check "versions.txt names $t$suffix" "grep -q ' $t ' $share/versions.txt"
   done
