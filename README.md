@@ -158,7 +158,7 @@ sbx can run separate instances, one for each Claude account (the repo `sbx-insta
   (`sbx-instance check`), then run `build.sh --load`.
 - **An instance that is not signed in to Docker gets no image,** and counts as a failed load. A typing error in
   the list of `sbx-instance` is such an instance: each sbx call creates the instance of its name, and nobody signed
-  it in. So a typing error costs a folder of about 4 KB, not a copy of 4.2 GB.
+  it in. So a typing error costs two folders of about 52 KB, not a copy of 4.2 GB.
 - **`build.sh --load`** loads the good image into each instance again, under its two tags, and removes each other
   version tag. It builds nothing and runs no check. Use it for a new instance and after a failed load.
 - **`build.sh --rollback`** loads the previous image into each instance.
