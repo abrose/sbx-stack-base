@@ -196,7 +196,7 @@ cleanup() {
   # A run that stopped during the save left a part of a file. The copy itself never has this name.
   rm -f "$copy.new" 2>/dev/null || true
   [ "$finished" -eq 0 ] || return 0
-  [ -z "$stop_again" ] || sbx-instance run "$stop_again" -- --no-input daemon stop >/dev/null 2>&1 || true
+  [ -z "$stop_again" ] || stop_daemon "$stop_again"
   if [ "$others_started" -eq 1 ]; then
     # The same command again would raise the version a second time.
     echo "build.sh stopped during the loads into the other sbx instances. The image is good and" \
@@ -336,14 +336,32 @@ daemon_stopped() {
   [ "${value%"${value##*[![:space:]]}"}" = stopped ]
 }
 
+# stop_daemon <instance>: stops the daemon of the instance, unless a sandbox runs in it. A load takes about a
+# minute, and a person can start a sandbox in that time. A list that sbx does not give counts as no sandbox.
+stop_daemon() {
+  local list
+  list=$(sbx-instance run "$1" -- --no-input ls --json 2>/dev/null) || list=""
+  if [ "$(jq -r 'if type == "array" then any(.[]; .status != "stopped") else false end' <<<"$list" 2>/dev/null)" = true ]
+  then
+    echo "the daemon of the instance $1 stays running: it did not run before the load, but a sandbox runs in it now" >&2
+    return 0
+  fi
+  sbx-instance run "$1" -- --no-input daemon stop >/dev/null 2>&1 || true
+}
+
 # load_into <instance> <version tag>: loads the saved image $tmp/others.tar into another sbx instance and removes
 # each other version tag there. A daemon that did not run before the load is stopped again, so a build leaves the
-# daemons as it found them.
+# daemons as it found them. An instance that is not signed in gets no image: a typing error in the list of
+# sbx-instance is such an instance, as each sbx call creates the instance of its name.
 load_into() {
   local name=$1 keep=$2 state list stale failed=0
   state=$(sbx-instance run "$name" -- --no-input daemon status 2>/dev/null) || state=""
   ! daemon_stopped "$state" || stop_again=$name
-  if sbx-instance run "$name" -- --no-input template load "$tmp/others.tar"; then
+  if ! sbx-instance run "$name" -- --no-input ls >/dev/null 2>&1; then
+    echo "the instance $name is not signed in to Docker, so it gets no image. If '$name' is a typing error in the" \
+      "list of sbx-instance, correct the list. Else run: sbx-instance run $name -- login, then: build.sh --load" >&2
+    failed=1
+  elif sbx-instance run "$name" -- --no-input template load "$tmp/others.tar"; then
     if list=$(sbx-instance run "$name" -- --no-input template ls --json |
       jq -r '.[] | select(.repository | test("(^|/)sbx-stack-base$")) | .tag'); then
       for stale in $list; do
@@ -361,7 +379,7 @@ load_into() {
     failed=1
   fi
   if [ -n "$stop_again" ]; then
-    sbx-instance run "$name" -- --no-input daemon stop >/dev/null 2>&1 || true
+    stop_daemon "$name"
     stop_again=""
   fi
   return "$failed"

@@ -5,8 +5,9 @@
 # verdict it prints. The engine also logs the rolling usage sample.
 #
 # In a sandbox (IS_SANDBOX is set and not empty) the status has the sandbox form: each row starts with a colored
-# stripe, and the first chip is a pill in the same color that names the sbx instance and the sandbox. Each instance
-# has its own color. The rest of each row is the row of the Mac. Else the output is the output for the Mac.
+# stripe, and the first chip is a pill in the same color that names the sbx instance and the sandbox. The color
+# comes from the name of the instance. The rest of each row is the row of the Mac. Else the output is the output for
+# the Mac.
 input=$(cat)
 
 # The colors of the sandbox form, as 24-bit RGB. An instance gets the color PALETTE[sum of the bytes of its name
@@ -35,9 +36,10 @@ MAGENTA='\033[35m'; DIM='\033[2m'
 # that the instance has no label, or that the sandbox is older than the label.
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# instance_color <name>: prints the color of an instance; GRAY for no name or "?".
+# instance_color <name>: prints the color of an instance; GRAY for no name or "?". The C locale makes each step one
+# byte of the name, and "& 255" makes a byte over 127 positive, so each locale and bash version gives one sum.
 instance_color() {
-  local name=$1 sum=0 i code
+  local name=$1 sum=0 i code LC_ALL=C
   case "$name" in
     '' | '?')
       printf '%s' "$GRAY"
@@ -46,7 +48,7 @@ instance_color() {
   esac
   for ((i = 0; i < ${#name}; i++)); do
     printf -v code '%d' "'${name:i:1}"
-    sum=$((sum + code))
+    sum=$((sum + (code & 255)))
   done
   printf '%s' "${PALETTE[sum % ${#PALETTE[@]}]}"
 }

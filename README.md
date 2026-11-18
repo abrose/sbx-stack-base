@@ -156,13 +156,18 @@ sbx can run separate instances, one for each Claude account (the repo `sbx-insta
 - **If a load into one instance fails,** `build.sh` names the instance, goes on with the next one, and exits 1 at
   its end. The image is good and `VERSION` holds its version all the same. Repair the instance
   (`sbx-instance check`), then run `build.sh --load`.
+- **An instance that is not signed in to Docker gets no image,** and counts as a failed load. A typing error in
+  the list of `sbx-instance` is such an instance: each sbx call creates the instance of its name, and nobody signed
+  it in. So a typing error costs a folder of about 4 KB, not a copy of 4.2 GB.
 - **`build.sh --load`** loads the good image into each instance again, under its two tags, and removes each other
   version tag. It builds nothing and runs no check. Use it for a new instance and after a failed load.
 - **`build.sh --rollback`** loads the previous image into each instance.
 - **If `build.sh` stops during the loads** (a signal, a closed terminal), the image is good and `VERSION` holds
   its version. Run `build.sh --load` then. The same build command again would raise the version a second time.
 - **Daemons.** If the daemon of another instance did not run before its load, `build.sh` stops it again after the
-  load. The daemon of the instance of this folder stays as the check left it.
+  load, unless a sandbox runs in it then: a load takes about a minute, and you can start a sandbox in that time.
+  A line then says that the daemon stays running. The daemon of the instance of this folder stays as the check
+  left it.
 - **Disk.** Each instance holds its own copy of the template: about 4.2 GB for each.
 
 ### The version
@@ -367,12 +372,14 @@ not empty) it draws the sandbox form. You see at one look that a session runs in
   its create only.
 - **The stripe.** Each of the three rows starts with a bar `▌` in the color of the pill. The rest of each row is
   the row of the Mac. Nothing fills a row, so the width of the terminal does not matter.
-- **The color of an instance.** Each instance has its own color from a palette of six: the sum of the bytes of its
-  name, modulo six. Two instances can get the same color. The constants `PALETTE`, `GRAY` and `PILL_TEXT` are at
-  the top of the script; `tests/statusline.sh` holds the same values.
+- **The color of an instance.** Each instance gets a color from a palette of six: the sum of the bytes of its name
+  in UTF-8, modulo six. Two instances can get the same color. The constants `PALETTE`, `GRAY` and `PILL_TEXT` are
+  at the top of the script; `tests/statusline.sh` holds the same values.
 
-Outside a sandbox the output does not change: `tests/statusline.expected` holds it for a fixed input, byte for
-byte. After a wanted change of that output, write the file new: `STATUSLINE_PIN=1 bash tests/statusline.sh`.
+Outside a sandbox the output does not change. The files `tests/statusline*.expected` hold it for a fixed input,
+byte for byte: the default profile, a named profile, a git branch, and quota bars. The files were written with the
+script from before the sandbox form, so the tests prove that the form changed nothing on the Mac. After a wanted
+change of that output, write the files new: `STATUSLINE_PIN=1 bash tests/statusline.sh`.
 
 ### Add a layer
 
@@ -422,5 +429,5 @@ stop and start.
 | `layers/<name>/` | one layer: `install.sh`, optional build scripts, and its files |
 | `tests/seed.sh` | static checks of the files |
 | `tests/build.sh` | unit tests of `build.sh` |
-| `tests/statusline.sh`, `tests/statusline.expected` | unit tests of `layers/claude/statusline.sh`, and its output outside a sandbox |
+| `tests/statusline.sh`, `tests/statusline*.expected` | unit tests of `layers/claude/statusline.sh`, and its outputs outside a sandbox |
 | `tests/check.sh`, `tests/sbxenv.yaml` | the check in a sandbox from the template, and its project file |

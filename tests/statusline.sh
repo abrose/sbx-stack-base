@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Unit tests of layers/claude/statusline.sh, on the Mac. The script runs with an empty environment, a fixed input,
 # a HOME and a working folder below a temporary folder, and a PATH that holds only the tools that it needs.
-# tests/statusline.expected is the output for a session that is not in a sandbox. To write it new after a wanted
-# change of that output: STATUSLINE_PIN=1 bash tests/statusline.sh
+# tests/statusline*.expected are the outputs for a session that is not in a sandbox: the default profile, a named
+# profile, a git branch, and quota bars. To write them new after a wanted change of that output:
+#   STATUSLINE_PIN=1 bash tests/statusline.sh
+# STATUSLINE_SCRIPT names another script for the pin, for example an older version, to prove an unchanged output.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd -P)
-script=$root/layers/claude/statusline.sh
+script=${STATUSLINE_SCRIPT:-$root/layers/claude/statusline.sh}
 expected=$root/tests/statusline.expected
 tmp=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
@@ -82,6 +84,7 @@ expect() {
 not() { ! "$@"; }
 row() { sed -n "${1}p" "$out"; }
 rows_are() { [ "$(wc -l <"$out" | tr -d ' ')" -eq "$1" ] && [ "$rc" -eq 0 ]; }
+clean_exit() { [ "$rc" -eq 0 ] && [ ! -s "$err" ]; }
 said() { grep -qF -- "$1" "$out"; }
 same_bytes() { cmp -s "$1" "$2"; }
 keep() { cp "$out" "$tmp/$1"; }
@@ -117,10 +120,34 @@ as_on_the_mac() {
 
 sandbox=(IS_SANDBOX=1 SANDBOX_NAME=box SBX_INSTANCE=inst)
 
+# A working folder in a git repo, on a branch.
+repo=$tmp/repo/app
+mkdir -p "$repo"
+git init -q -b feature-x "$repo"
+# mac_case <case>: draws the case of the Mac: default, profile, branch or quota.
+mac_case() {
+  case "$1" in
+    default) draw ;;
+    profile) draw "CLAUDE_CONFIG_DIR=$home/.claude-work" ;;
+    branch)
+      work=$repo
+      draw
+      work=$tmp/work/app
+      ;;
+    quota) draw "QUOTA_ENGINE=$tmp/engine" ;;
+  esac
+}
+# pinned <case>: the file with the pinned output of the case.
+pinned() {
+  if [ "$1" = default ]; then echo "$expected"; else echo "$root/tests/statusline-$1.expected"; fi
+}
+
 if [ -n "${STATUSLINE_PIN:-}" ]; then
-  draw
-  cp "$out" "$expected"
-  echo "wrote $expected"
+  for case in default profile branch quota; do
+    mac_case "$case"
+    cp "$out" "$(pinned "$case")"
+    echo "wrote $(pinned "$case")"
+  done
   exit 0
 fi
 
@@ -131,6 +158,12 @@ draw COLUMNS=120
 expect "no IS_SANDBOX, with COLUMNS: the output of today" same_bytes "$out" "$expected"
 draw IS_SANDBOX= SANDBOX_NAME=box SBX_INSTANCE=inst COLUMNS=120
 expect "IS_SANDBOX is empty: the output of today" same_bytes "$out" "$expected"
+for case in profile branch quota; do
+  mac_case "$case"
+  expect "the case $case: the output of today" same_bytes "$out" "$(pinned "$case")"
+done
+expect "the case branch: the pinned output names the branch" grep -qF "🌿 feature-x" "$(pinned branch)"
+expect "the case profile: the pinned output names the profile" grep -qF "👤 .claude-work" "$(pinned profile)"
 
 echo "== in a sandbox"
 draw "${sandbox[@]}" COLUMNS=120
@@ -148,6 +181,13 @@ echo "== the color of an instance"
 for name in alpha beta gamma delta epsilon zeta default check; do
   draw IS_SANDBOX=1 SANDBOX_NAME=box "SBX_INSTANCE=$name"
   expect "the instance $name has its color" chip_is "$name" box
+done
+# A name that is not ASCII: the wizard writes none, but a person can set SBX_INSTANCE by hand. The color is the sum
+# of the bytes of the name in UTF-8, with and without a UTF-8 locale.
+for locale in "" en_US.UTF-8; do
+  draw IS_SANDBOX=1 SANDBOX_NAME=box SBX_INSTANCE=zürich "LC_ALL=$locale"
+  expect "a name that is not ASCII, LC_ALL=$locale: exit 0 and no error" clean_exit
+  expect "a name that is not ASCII, LC_ALL=$locale: the color of its bytes" chip_is zürich box
 done
 expect "the palette gives the instances different colors" \
   [ "$(for n in alpha beta gamma delta epsilon zeta; do color_of "$n"; done | sort -u | wc -l | tr -d ' ')" -gt 3 ]

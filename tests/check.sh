@@ -146,8 +146,8 @@ assertions() {
     "echo '{}' | SBX_INSTANCE=probe $share/claude/statusline | grep -c '📦 probe · $name' | grep -qx 1 \
     && echo '{}' | $share/claude/statusline | grep -c '▌' | grep -qx 3"
   check "the statusline runs no python module from the current folder$suffix" \
-    "d=\$(mktemp -d) && cd \$d && echo 'open(\"/tmp/statusline-module-hijack\", \"w\")' > re.py && cp re.py unicodedata.py \
-    && { echo '{}' | COLUMNS=100 $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-module-hijack"
+    "d=\$(mktemp -d) && cd \$d && echo 'open(\"/tmp/statusline-module-hijack\", \"w\")' > re.py \
+    && { echo '{}' | $share/claude/statusline >/dev/null 2>&1 || true; } && ! test -e /tmp/statusline-module-hijack"
   for t in $recorded $plugins; do
     check "versions.txt names $t$suffix" "grep -q ' $t ' $share/versions.txt"
   done

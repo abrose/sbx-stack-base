@@ -865,6 +865,19 @@ case "$1" in
         # STUB_STATUS_MORE=1: the answer has a second Status line, for a part of the daemon that does not run.
         [ -z "${STUB_STATUS_MORE:-}" ] || echo "  Status:  stopped (kit registry)"
         ;;
+      "ls "*)
+        # STUB_SIGNED_OUT_IN holds the instances that are not signed in to Docker: sbx ls fails there.
+        case " ${STUB_SIGNED_OUT_IN:-} " in
+          *" $name "*) exit 1 ;;
+        esac
+        # "ls --json": one sandbox. STUB_RUNNING_IN holds the instances where it runs; elsewhere it is stopped.
+        if [ "${2:-}" = --json ]; then
+          case " ${STUB_RUNNING_IN:-} " in
+            *" $name "*) echo '[{"name":"box","status":"running"}]' ;;
+            *) echo '[{"name":"box","status":"stopped"}]' ;;
+          esac
+        fi
+        ;;
       "template load")
         # STUB_SIGNAL_IN is an instance: build.sh gets the signal TERM during the load into it.
         if [ "${STUB_SIGNAL_IN:-}" = "$name" ]; then
@@ -966,6 +979,28 @@ fresh
 ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha STUB_LOAD_FAIL_IN=alpha --
 expect "a daemon that was stopped, and the load fails: it is stopped again" \
   call_is "sbx-instance run alpha -- --no-input daemon stop"
+
+# A load takes about a minute: a person can start a sandbox in the instance in that time.
+fresh
+ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha --
+expect "a daemon that was stopped: the build looks at the sandboxes just before the stop" \
+  in_order "sbx-instance run alpha -- --no-input ls --json" "sbx-instance run alpha -- --no-input daemon stop"
+fresh
+ibuild SBX_STACK_CHECK=true STUB_STOPPED=alpha STUB_RUNNING_IN=alpha --
+expect "a sandbox that runs now: exit 0" exit_is 0
+expect "a sandbox that runs now: the daemon is not stopped" not_called "sbx-instance run alpha -- --no-input daemon stop"
+expect "a sandbox that runs now: a line says why the daemon runs on" said "the daemon of the instance alpha stays running"
+
+# A name with a typing error in the list is an instance that nobody signed in: it gets no 4.2 GB image.
+fresh
+ibuild SBX_STACK_CHECK=true STUB_SIGNED_OUT_IN=alpha -- --bump minor
+expect "an instance that is not signed in: exit 1" exit_is 1
+expect "an instance that is not signed in: no load into it" \
+  not_called "sbx-instance run alpha -- --no-input template load"
+expect "an instance that is not signed in: the output names it and a typing error" said "a typing error"
+expect "an instance that is not signed in: the output names the sign-in" said "sbx-instance run alpha -- login"
+expect "an instance that is not signed in: beta still gets the image" \
+  called "sbx-instance run beta -- --no-input template load "
 
 fresh
 ibuild SBX_STACK_CHECK=true STUB_STATUS_MORE=1 --
