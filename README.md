@@ -108,8 +108,9 @@ The designs are in `docs/specs/`:
 | [2026-11-12-sbx-stack-base-selective-update-design.md](docs/specs/2026-11-12-sbx-stack-base-selective-update-design.md) | `--update` and the plugin lock |
 
 A later design changes the earlier ones where they differ. The designs name `sbx-kit-builder`: the owner's repo
-with the task tool `sbx-task`, the plans and the sbx facts (F1 to F14) with their probes. It is not public; each
-fact that a design depends on is stated in the design.
+with the plans and the sbx facts (F1 to F14) with their probes. It is not public; each fact that a design depends on
+is stated in the design. The task tool `sbx-task` lives in the public [sbx-utils](https://github.com/abrose/sbx-utils),
+with the agent skill `sbx-utils`.
 
 ## Build, update, roll back
 
@@ -236,7 +237,7 @@ What to know about the tags (`<major version>`, `<version>`, `good`, `previous`)
     the file: a copy that is older than the `good` image gives a later build older versions with no message.
 - On the first build there is no `good` image. If its check fails, the failed template stays loaded.
 
-A project template (`sbx-task template <project>` in `sbx-kit-builder`) holds the base it was saved from. After an
+A project template (`sbx-task template <project>`, from [sbx-utils](https://github.com/abrose/sbx-utils)) holds the base it was saved from. After an
 update, run `sbx-task template <project>` again for each project with a template. `sbx-task new` warns until then.
 
 | Number (2026-11-12, Apple silicon) | Value |
